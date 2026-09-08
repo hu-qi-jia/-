@@ -1,9 +1,11 @@
 /**
- * 知识库页(P4-KB v1,设计文档 §7):人工维护的"标题+正文"话术卡列表。
- * 操作:新建(内联表单)/ 关键词筛选 / 编辑(标题实质变更才重嵌)/
+ * 知识库页(P4-KB,设计文档 §7):人工维护的"标题+正文"话术卡 + md 文档上传。
+ * 手工条目操作:新建(内联表单)/ 关键词筛选 / 编辑(标题实质变更才重嵌)/
  * 停用开关(停用不参与检索、不重嵌)/ 删除(内联二次确认)/ 填充 / 复制。
+ * 文档上传:md 文本按 500 字/75 重叠分块(同原项目),每块一条只读条目,逐块向量化;
+ * 同名文档重复上传整篇替换。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ThemeTokens } from '../ui/theme'
 import { sendMessage } from '../utils/message-passing'
 import type {
@@ -13,6 +15,7 @@ import type {
   GetPanelDataResponse,
   PanelKnowledge,
   UpdateKbResponse,
+  UploadKbDocResponse,
 } from '../types/messages'
 import { Btn, Notice, formatTs, type NoticeMsg } from './ui-bits'
 
@@ -38,6 +41,8 @@ export function KnowledgeTab({
   const [draftTitle, setDraftTitle] = useState('')
   const [draftContent, setDraftContent] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     try {
@@ -69,8 +74,32 @@ export function KnowledgeTab({
     return items.filter((k) => k.title.toLowerCase().includes(kw) || k.content.toLowerCase().includes(kw))
   }, [items, keyword])
 
-  const submitCreate = async () => {
+  /** 上传 md 文档:读文本 → UPLOAD_KB_DOC(分块+逐块向量化,同名整篇替换) */
+  const uploadDoc = async (file: File) => {
+    setUploading(true)
     try {
+      const resp = await sendMessage<UploadKbDocResponse>({
+        type: 'UPLOAD_KB_DOC',
+        payload: { name: file.name, content: await file.text() },
+      })
+      if (resp.payload.error) {
+        setMsg({ ok: false, text: `上传失败:${resp.payload.error}` })
+      } else {
+        setMsg({
+          ok: true,
+          text: `已导入《${resp.payload.docId}》:${resp.payload.chunkCount} 块${resp.payload.replaced ? '(替换旧版)' : ''},后台逐块向量化`,
+        })
+        await refresh()
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `上传失败:${String(err)}` })
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const submitCreate = async () => {    try {
       const resp = await sendMessage<CreateKbResponse>({
         type: 'CREATE_KB',
         payload: { title: newTitle, content: newContent },
@@ -213,10 +242,26 @@ export function KnowledgeTab({
           </div>
         </div>
       ) : (
-        <Btn tk={tk} variant="primary" onClick={() => setCreating(true)}>
-          + 新建知识条目
-        </Btn>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <Btn tk={tk} variant="primary" onClick={() => setCreating(true)}>
+            + 新建条目
+          </Btn>
+          <Btn tk={tk} disabled={uploading} title="上传 .md 文档:自动分块(500 字/75 重叠)并逐块向量化" onClick={() => fileRef.current?.click()}>
+            {uploading ? '导入中…' : '⬆ 上传 .md'}
+          </Btn>
+        </div>
       )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".md,.markdown,text/markdown,text/plain"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) void uploadDoc(f)
+        }}
+      />
 
       <input
         value={keyword}
@@ -295,7 +340,7 @@ export function KnowledgeTab({
                       fontWeight: 600,
                     }}
                   >
-                    知识库
+                    {k.source === 'doc' ? '📄 文档' : '知识库'}
                   </span>
                   {disabled && (
                     <span style={{ fontSize: 10, color: tk.textMuted }}>已停用</span>
@@ -335,9 +380,11 @@ export function KnowledgeTab({
                   <Btn tk={tk} disabled={disabled} onClick={() => void copyKb(k)}>
                     复制
                   </Btn>
-                  <Btn tk={tk} onClick={() => startEdit(k)}>
-                    编辑
-                  </Btn>
+                  {k.source !== 'doc' && (
+                    <Btn tk={tk} onClick={() => startEdit(k)}>
+                      编辑
+                    </Btn>
+                  )}
                   <Btn tk={tk} title={disabled ? '启用(重新参与检索)' : '停用(保留数据,不参与检索)'} onClick={() => void toggleEnabled(k)}>
                     {disabled ? '启用' : '停用'}
                   </Btn>
@@ -363,8 +410,9 @@ export function KnowledgeTab({
       })}
 
       <div style={{ fontSize: 10.5, color: tk.textTertiary, lineHeight: 1.6 }}>
-        知识库与金标准的区别:金标准沉淀"真实问答对",知识库沉淀"常用话术卡";
-        检索时层级为 金标准 &gt; 知识库 &gt; 历史记录。
+        金标准沉淀"真实问答对",知识库沉淀"常用话术卡";检索层级为 金标准 &gt; 知识库 &gt; 历史记录。
+        上传 .md 文档会按 500 字/75 重叠自动分块并逐块向量化(与旧项目同逻辑);
+        文档块只读,同名文件重新上传即整篇替换。
       </div>
     </div>
   )

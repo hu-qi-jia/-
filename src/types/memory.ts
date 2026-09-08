@@ -90,15 +90,15 @@ export interface FolderRecord {
 
 /** 知识库条目(knowledge,P4-KB v1):人工维护的"标题+正文"话术卡,豁免保留期 */
 export interface KnowledgeRecord {
-  /** 主键 uuid */
+  /** 主键 uuid;文档分块为 `${doc根id}-c${序号}`(与原项目 chunk id 同风格) */
   id: string
-  /** 条目标题(检索锚,类比金标准 question) */
+  /** 条目标题(手工条目=检索锚,类比金标准 question;文档块=展示标签"文档名 · 段n") */
   title: string
   /** 正文(候选填充/复制的内容,类比金标准 answer) */
   content: string
-  /** 归一化标题哈希 —— 创建/导入幂等去重 */
+  /** 归一化哈希 —— 手工条目按标题幂等去重;文档块按"文档名#序号"占位唯一 */
   questionHash: string
-  /** 标题锚向量;标题实质变更即作废旧向量、自动重嵌 */
+  /** 向量锚:手工条目=标题;文档块=块正文(source 区分,见 importKbDocument) */
   qEmbedding?: Float32Array
   embeddingModel?: string
   embeddingVersion?: string
@@ -106,6 +106,10 @@ export interface KnowledgeRecord {
   hasEmbedding: number
   /** 1=参与检索 0=停用(停用不删数据、不重嵌) */
   enabled: number
+  /** 条目来源:manual=面板手工创建(默认);doc=md 文档分块(只读,重传替换) */
+  source?: 'manual' | 'doc'
+  /** 文档块所属文档名(去扩展名,索引);手工条目缺省 */
+  docId?: string
   createdAt: number
   updatedAt: number
 }

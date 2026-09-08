@@ -57,7 +57,7 @@ export interface ExportedReply {
   hasEmbedding: number
 }
 
-/** 导出知识库条目(标题锚向量剥离;enabled 原样保留) */
+/** 导出知识库条目(向量剥离;enabled/source/docId 原样保留) */
 export interface ExportedKnowledge {
   id: string
   title: string
@@ -65,6 +65,8 @@ export interface ExportedKnowledge {
   questionHash: string
   hasEmbedding: number
   enabled: number
+  source?: 'manual' | 'doc'
+  docId?: string
   createdAt: number
   updatedAt: number
 }
@@ -124,6 +126,8 @@ const stripKnowledge = (k: KnowledgeRecord): ExportedKnowledge => ({
   questionHash: k.questionHash,
   hasEmbedding: 0,
   enabled: k.enabled,
+  ...(k.source !== undefined ? { source: k.source } : {}),
+  ...(k.docId !== undefined ? { docId: k.docId } : {}),
   createdAt: k.createdAt,
   updatedAt: k.updatedAt,
 })
@@ -323,6 +327,8 @@ export function planKnowledgeImports(
       questionHash: k.questionHash,
       hasEmbedding: 0,
       enabled: k.enabled,
+      ...(k.source !== undefined ? { source: k.source } : {}),
+      ...(k.docId !== undefined ? { docId: k.docId } : {}),
       createdAt: k.createdAt,
       updatedAt: k.updatedAt,
     })

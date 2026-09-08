@@ -58,6 +58,8 @@ import type {
   UpdateKbResponse,
   DeleteKbRequest,
   DeleteKbResponse,
+  UploadKbDocRequest,
+  UploadKbDocResponse,
   UpdateSettingsRequest,
   UpdateSettingsResponse,
   ExportDataRequest,
@@ -85,6 +87,7 @@ import { exportData, importData } from "./transfer";
 import {
   createKnowledge,
   deleteKnowledge,
+  importKbDocument,
   updateKnowledgeWithReembed,
 } from "./knowledge";
 import { saveSettings } from "./settings";
@@ -405,6 +408,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             type: "DELETE_KB_RESPONSE",
             payload: { success: false, error: String(err) },
+          }),
+        );
+      return true;
+
+    case "UPLOAD_KB_DOC":
+      importKbDocument((message as UploadKbDocRequest).payload)
+        .then((out) =>
+          sendResponse({
+            type: "UPLOAD_KB_DOC_RESPONSE",
+            payload: out,
+          } as UploadKbDocResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "UPLOAD_KB_DOC_RESPONSE",
+            payload: { error: String(err) },
           }),
         );
       return true;

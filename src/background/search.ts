@@ -76,7 +76,9 @@ export async function searchSuggestions(rawQuery: string): Promise<SearchOutcome
       source: {
         id: k.id,
         kind: "knowledge" as const,
-        question: k.title,
+        // 手工条目锚=标题;文档块锚=块正文(importKbDocument 的向量即嵌正文,
+        // 此处 question 供 BM25 与候选"来源摘要"展示,须与向量锚一致)
+        question: k.source === "doc" ? k.content : k.title,
         questionTs: k.updatedAt,
       },
       vec: k.qEmbedding as Float32Array,

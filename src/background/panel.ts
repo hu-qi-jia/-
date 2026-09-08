@@ -85,6 +85,7 @@ export async function getPanelData(
       content: k.content,
       hasEmbedding: k.hasEmbedding,
       enabled: k.enabled,
+      ...(k.source !== undefined ? { source: k.source } : {}),
       updatedAt: k.updatedAt,
     })),
   };

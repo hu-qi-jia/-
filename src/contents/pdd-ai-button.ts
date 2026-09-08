@@ -362,13 +362,15 @@ function candidateRow(s: Suggestion, query: string): HTMLDivElement {
 
   const src = document.createElement('div')
   src.className = 'pddcs-cand-src'
-  src.textContent = `原问题:${s.sourceQuestion}`
+  // 金标准/历史:来源是原始问题;知识库:手工条目来源是标题,文档块来源即命中片段
+  src.textContent = `${s.kind === 'knowledge' ? '来源' : '原问题'}:${s.sourceQuestion}`
   src.title = s.sourceQuestion
   row.appendChild(src)
 
   row.addEventListener('click', () => {
     if (fillInput(s.text)) {
-      toast(`已填充:${s.kind === 'golden' ? '金标准' : '历史回忆'} · 请手动发送`)
+      const kindLabel = s.kind === 'golden' ? '金标准' : s.kind === 'knowledge' ? '知识库' : '历史回忆'
+      toast(`已填充:${kindLabel} · 请手动发送`)
       closePopup()
     } else {
       toast('未找到输入框,请手动粘贴')

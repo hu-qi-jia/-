@@ -48,9 +48,14 @@ export class PddDatabase extends Dexie {
       errors: "++id, timestamp",
     });
 
-    // P4-KB v1:知识库表(已建库的浏览器走 Dexie 升级,新装直接建 version(2))
+    // P4-KB v1:知识库表(已建库的浏览器走 Dexie 升级,新装直接建 version(3))
     this.version(2).stores({
       knowledge: "id, questionHash, hasEmbedding, enabled",
+    });
+
+    // P4-KB 文档上传:knowledge 加 docId 索引(整篇替换/按文档清理)
+    this.version(3).stores({
+      knowledge: "id, questionHash, hasEmbedding, enabled, docId",
     });
   }
 
@@ -389,6 +394,19 @@ export class PddDatabase extends Dexie {
 
   async deleteKnowledge(id: string): Promise<void> {
     await this.knowledge.delete(id);
+  }
+
+  /** 某文档的全部块(整篇替换/展示计数) */
+  async listKnowledgeByDoc(docId: string): Promise<KnowledgeRecord[]> {
+    return this.knowledge.where("docId").equals(docId).toArray();
+  }
+
+  /** 整篇删除文档块;返回删除的块数 */
+  async deleteKnowledgeByDoc(docId: string): Promise<number> {
+    const ids = await this.knowledge.where("docId").equals(docId).primaryKeys();
+    if (ids.length === 0) return 0;
+    await this.knowledge.bulkDelete(ids);
+    return ids.length;
   }
 
   // ─── 回复文件夹(folders) ──────────────────────────────────────────────────────

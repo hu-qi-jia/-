@@ -215,6 +215,8 @@ export interface PanelKnowledge {
   content: string
   hasEmbedding: number
   enabled: number
+  /** manual=手工;doc=md 文档分块(只读) */
+  source?: 'manual' | 'doc'
   updatedAt: number
 }
 
@@ -317,6 +319,20 @@ export interface DeleteKbResponse {
   payload: { success: boolean; error?: string }
 }
 
+// ─── P4-KB 文档上传(popup → SW)───────────────────────────────────────────────
+// md 文本按原项目 chunkText(500 字/75 重叠)分块,每块一条知识条目,
+// 锚向量=块正文;同名文档(docId)重复上传整篇替换。
+
+export interface UploadKbDocRequest {
+  type: 'UPLOAD_KB_DOC'
+  payload: { name: string; content: string }
+}
+
+export interface UploadKbDocResponse {
+  type: 'UPLOAD_KB_DOC_RESPONSE'
+  payload: { docId?: string; chunkCount?: number; replaced?: boolean; error?: string }
+}
+
 // ─── P3 设置(popup → SW)───────────────────────────────────────────────────────
 
 export interface UpdateSettingsRequest {
@@ -408,6 +424,7 @@ export type ExtensionMessage =
   | CreateKbRequest
   | UpdateKbRequest
   | DeleteKbRequest
+  | UploadKbDocRequest
   | UpdateSettingsRequest
   | ExportDataRequest
   | ImportDataRequest
@@ -431,6 +448,7 @@ export type ExtensionMessageResponse =
   | CreateKbResponse
   | UpdateKbResponse
   | DeleteKbResponse
+  | UploadKbDocResponse
   | UpdateSettingsResponse
   | ExportDataResponse
   | ImportDataResponse
