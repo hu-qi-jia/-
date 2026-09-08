@@ -272,6 +272,22 @@ export class PddDatabase extends Dexie {
     return this.goldens.where("hasEmbedding").equals(0).limit(limit).toArray();
   }
 
+  /** 已嵌问答记录(检索源 B;TTL 保证都在保留期内) */
+  async getEmbeddedQaRecords(): Promise<QaRecord[]> {
+    return this.qaRecords.where("hasEmbedding").equals(1).toArray();
+  }
+
+  /** 已嵌金标准(检索源 A) */
+  async getEmbeddedGoldens(): Promise<GoldenRecord[]> {
+    return this.goldens.where("hasEmbedding").equals(1).toArray();
+  }
+
+  /** 批量取回复(检索候选展开) */
+  async getRepliesByQaIds(qaIds: string[]): Promise<ReplyRecord[]> {
+    if (qaIds.length === 0) return [];
+    return this.replies.where("qaId").anyOf(qaIds).toArray();
+  }
+
   // ─── 金标准(goldens) ──────────────────────────────────────────────────────────
 
   async addGolden(record: GoldenRecord): Promise<string> {

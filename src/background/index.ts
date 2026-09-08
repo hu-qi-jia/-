@@ -27,12 +27,18 @@ import {
 import type {
   GetStatsRequest,
   GetStatsResponse,
+  GetSuggestionsRequest,
+  GetSuggestionsResponse,
   PingEmbedRequest,
   PingEmbedResponse,
   PddIngestRequest,
   SelfTestWriteRequest,
   SelfTestWriteResponse,
+  AddGoldenRequest,
+  AddGoldenResponse,
 } from "../types/messages";
+import { searchSuggestions } from "./search";
+import { addGoldenFromSuggestion } from "./goldens";
 
 const LEGACY_DB_NAME = "AIMemoryDB";
 const TTL_ALARM_NAME = "pddcs-daily-ttl";
@@ -194,6 +200,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             type: "PDD_INGEST_RESPONSE",
             payload: { queued: 0, skipped: 0, error: String(err) },
+          }),
+        );
+      return true;
+
+    case "GET_SUGGESTIONS":
+      searchSuggestions((message as GetSuggestionsRequest).payload.query)
+        .then((out) =>
+          sendResponse({
+            type: "GET_SUGGESTIONS_RESPONSE",
+            payload: out,
+          } as GetSuggestionsResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "GET_SUGGESTIONS_RESPONSE",
+            payload: { suggestions: [], error: String(err) },
+          }),
+        );
+      return true;
+
+    case "ADD_GOLDEN":
+      addGoldenFromSuggestion((message as AddGoldenRequest).payload)
+        .then((out) =>
+          sendResponse({
+            type: "ADD_GOLDEN_RESPONSE",
+            payload: out,
+          } as AddGoldenResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "ADD_GOLDEN_RESPONSE",
+            payload: { error: String(err) },
           }),
         );
       return true;
