@@ -260,7 +260,7 @@ export function assembleSuggestions(
     }
   }
 
-  // 同内容折叠:hashText 相同即同内容;金标准优先,其次知识库,再次高分,平分取最新
+  // 同内容折叠:hashText 相同即同内容;金标准优先,其次历史,再次高分,平分取最新
   const groups = new Map<string, Cand[]>()
   for (const c of candidates) {
     const key = hashText(c.text)
@@ -269,8 +269,10 @@ export function assembleSuggestions(
     else groups.set(key, [c])
   }
 
+  // 层级:金标准(人工沉淀,最准)> 历史(真实话术,打招呼等高频场景覆盖最好)>
+  // 知识库(文档片段,预设少;阈值虽放宽到 0.4,置顶优先级最低)
   const foldWinnerRank = (k: Suggestion['kind']): number =>
-    k === 'golden' ? 0 : k === 'knowledge' ? 1 : 2
+    k === 'golden' ? 0 : k === 'history' ? 1 : 2
 
   const winners = [...groups.values()].map((g): Cand => {
     if (g.length === 1) return g[0]
@@ -283,7 +285,7 @@ export function assembleSuggestions(
     return { ...top, foldCount: g.length }
   })
 
-  // 排序:金标准 > 知识库 > 历史(可选置顶)→ 融合分 → 原始余弦 → 新
+  // 排序:金标准 > 历史 > 知识库(可选置顶)→ 融合分 → 原始余弦 → 新
   const tier = (c: Cand): number =>
     opts.goldenPriority ? foldWinnerRank(c.kind) : 1
   winners.sort(

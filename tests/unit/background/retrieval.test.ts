@@ -214,7 +214,7 @@ describe('知识库源 knowledge', () => {
     expect(ranked.map((r) => r.source.id)).toEqual(['k1'])
   })
 
-  it('层级排序:金标准 > 知识库 > 历史(goldenPriority 开)', () => {
+  it('层级排序:金标准 > 历史 > 知识库(goldenPriority 开)', () => {
     const mkRanked = (id: string, kind: 'golden' | 'knowledge' | 'history') => ({
       source: mkSource(id, kind, `问题-${id}`),
       cosine: 0.9,
@@ -230,8 +230,27 @@ describe('知识库源 knowledge', () => {
         now,
       },
     )
-    expect(out.map((s) => s.sourceId)).toEqual(['g1', 'k1', 'h1'])
-    expect(out.map((s) => s.kind)).toEqual(['golden', 'knowledge', 'history'])
+    expect(out.map((s) => s.sourceId)).toEqual(['g1', 'h1', 'k1'])
+    expect(out.map((s) => s.kind)).toEqual(['golden', 'history', 'knowledge'])
+  })
+
+  it('历史与知识库同分 → 历史置前(打招呼类场景历史更准)', () => {
+    const mkRanked = (id: string, kind: 'knowledge' | 'history') => ({
+      source: mkSource(id, kind, `问题-${id}`),
+      cosine: 0.9,
+      rrfScore: 0.05,
+    })
+    const out = assembleSuggestions(
+      [mkRanked('k1', 'knowledge'), mkRanked('h1', 'history')],
+      {
+        getReplies: (id) => [{ qaId: id, id: `r-${id}`, text: `文本-${id}`, ts: now }],
+        getGoldenAnswer: () => '',
+        getKbContent: (id) => `文本-${id}`,
+        goldenPriority: true,
+        now,
+      },
+    )
+    expect(out.map((s) => s.kind)).toEqual(['history', 'knowledge'])
   })
 
   it('goldenPriority 关闭时不按层级,纯融合分混排', () => {
