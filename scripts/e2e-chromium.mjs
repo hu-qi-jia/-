@@ -1,0 +1,103 @@
+/**
+ * 全自动自检(Playwright bundled Chromium 版):验证 P1 捕获链路
+ * unbranded Chromium 允许 --load-extension(品牌 Chrome 137+ 已禁用)。
+ * 复用已登录的 .chrome-debug-profile(cookie 为 DPAPI,同 Windows 账户可解密)。
+ *
+ * 1) 启动 chromium-1223 + 扩展(--load-extension build)
+ * 2) 打开 mms 聊天页(profile 已登录),等 hook 注入
+ * 3) 收集 [PDD CS] 控制台日志 + hook 状态
+ * 4) 点开买家对话(触发 chat/list 轮询),再看日志
+ * 5) 打开扩展 popup 页读统计数字
+ *
+ * 用法:node scripts/e2e-chromium.mjs
+ */
+import { chromium } from '@playwright/test'
+
+const ROOT = 'E:\\个人项目\\拼多多客服检索工具\\personal-ai-memory'
+const CHROME =
+  'C:\\Users\\胡起嘉\\AppData\\Local\\ms-playwright\\chromium-1223\\chrome-win64\\chrome.exe'
+const EXT = ROOT + '\\build\\chrome-mv3-prod'
+const PROFILE = 'E:\\个人项目\\拼多多客服检索工具\\.chrome-debug-profile'
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+const ctx = await chromium.launchPersistentContext(PROFILE, {
+  executablePath: CHROME,
+  headless: false,
+  args: [
+    `--disable-extensions-except=${EXT}`,
+    `--load-extension=${EXT}`,
+    '--no-first-run',
+    '--disable-session-crashed-bubble',
+  ],
+})
+console.log('浏览器已启动(profile 复用)')
+
+const logs = []
+let page = ctx.pages()[0]
+if (!page) page = await ctx.newPage()
+page.on('console', (msg) => {
+  const t = msg.text()
+  if (t.includes('[PDD CS]')) logs.push(t)
+})
+page.on('pageerror', (e) => logs.push('[PAGE_ERROR] ' + e.message))
+
+// ── 找扩展 id(等 service worker 或扩展页出现) ──
+let extId = null
+for (let i = 0; i < 15; i++) {
+  const sws = ctx.serviceWorkers()
+  for (const sw of sws) {
+    const m = sw.url().match(/^chrome-extension:\/\/([a-p]{32})\//)
+    if (m) extId = m[1]
+  }
+  const extPages = ctx.pages().filter((p) => p.url().startsWith('chrome-extension://'))
+  if (!extId && extPages.length) extId = new URL(extPages[0].url()).host
+  if (extId) break
+  await sleep(1000)
+}
+console.log('扩展 id:', extId ?? '(未找到,加载失败?)')
+
+// ── 打开聊天页 ──
+await page.goto('https://mms.pinduoduo.com/chat-merchant/index.html#/', {
+  waitUntil: 'domcontentloaded',
+  timeout: 60000,
+})
+console.log('页面:', page.url())
+await sleep(8000)
+
+const st = await page.evaluate(() => ({
+  netHooked: !!window.__pddcsNetHooked,
+  wsName: (window.WebSocket && window.WebSocket.name) || 'none',
+}))
+console.log('hook 状态:', JSON.stringify(st))
+console.log('日志(等 8s):', logs.length ? logs.join('\n') : '(无)')
+
+// ── 点开买家对话(触发历史拉取) ──
+for (const c of ['E***E', '眼睛的店铺']) {
+  try {
+    const loc = page.getByText(c, { exact: false }).first()
+    await loc.click({ timeout: 5000 })
+    console.log(`已点击对话: ${c}`)
+    break
+  } catch {
+    /* 下一个候选 */
+  }
+}
+await sleep(12000)
+console.log('=== 点开对话后日志 ===')
+console.log(logs.length ? logs.join('\n') : '(无)')
+
+// ── popup 统计 ──
+if (extId) {
+  const pop = await ctx.newPage()
+  await pop.goto(`chrome-extension://${extId}/popup.html`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000,
+  })
+  await sleep(4000)
+  console.log('=== popup 页面内容 ===')
+  console.log((await pop.evaluate(() => document.body.innerText)).slice(0, 1000))
+  await pop.close()
+}
+
+await ctx.close()
+process.exit(0)

@@ -1,38 +1,57 @@
 /**
  * EmbeddingEngine
  *
- * Lazy-loads Xenova/all-MiniLM-L6-v2 via Transformers.js as a singleton.
- * All embedding requests are processed through a serialized task queue
- * to prevent concurrent WASM memory overflow in the Service Worker context.
+ * 懒加载 Xenova/bge-small-zh-v1.5(中文检索专用,量化后 ~25MB)作为单例。
+ * 所有嵌入请求经串行任务队列执行,避免 SW/WASM 并发内存溢出。
  *
- * Returns a 384-dimensional Float32Array for each input text.
+ * 输出 512 维 Float32Array(mean pooling + L2 归一化)。
+ * 决策背景见 docs/adr/0001-embedding-model-bge-small-zh.md。
  */
 
 import { pipeline, env, type FeatureExtractionPipeline } from '@xenova/transformers'
 
-// Allow remote model download from Hugging Face CDN.
-// Model files are fetched on first use and cached by the browser.
+// 允许远程下载模型文件,首次使用时拉取并由浏览器缓存(扩展存储内)。
+// NOTE: huggingface.co 在本网络不可达;改用 hf-mirror.com 国内镜像(已验证可达)。
 env.allowLocalModels = false
 env.allowRemoteModels = true
+env.remoteHost = 'https://hf-mirror.com'
 
-// Force single-threaded WASM inference.
-// Multi-threaded ONNX creates workers via blob: URLs, which Chrome extension
-// CSP blocks ("script-src 'self' 'wasm-unsafe-eval'" does not allow blob:).
-// numThreads=1 makes ONNX use the non-threaded wasm file with no workers.
+// 强制单线程 WASM 推理:多线程 ONNX 以 blob: URL 起 worker,
+// 被扩展 CSP 拦截(script-src 'self' 'wasm-unsafe-eval' 不含 blob:)。
+// numThreads=1 使 ONNX 使用无 worker 的非线程版 wasm。
 env.backends.onnx.wasm.numThreads = 1
 
-const MODEL_NAME = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2'
-const EMBEDDING_VERSION = '1.0.0'
+const MODEL_NAME = 'Xenova/bge-small-zh-v1.5'
+// 模型族换代计数:bge 中文系 = 2.x;记录自带 embeddingVersion,
+// 将来再换模型时按旧版本号懒重嵌,无需人工干预。
+const EMBEDDING_VERSION = '2.0.0'
 
 // ─── Singleton Model ──────────────────────────────────────────────────────────
 
 let _pipe: FeatureExtractionPipeline | null = null
 let _loadPromise: Promise<FeatureExtractionPipeline> | null = null
+
+// 失败闩锁:加载失败后进入冷却期(避免每次请求都重复拉取),冷却结束允许重试;
+// 重抛时携带真实底层错误(供 UI/控制台定位 CORS/网络/路径问题)。
 let _modelFailed = false
+let _lastModelError: string | null = null
+let _retryAt = 0
+const FAIL_COOLDOWN_MS = 20_000
 
 async function getOrLoadPipeline(): Promise<FeatureExtractionPipeline> {
   if (_pipe) return _pipe
-  if (_modelFailed) throw new Error('Model failed to load previously')
+
+  if (_modelFailed) {
+    if (Date.now() < _retryAt) {
+      throw new Error(
+        `Model load failed previously: ${_lastModelError ?? 'unknown error'} ` +
+          '(cooldown in progress, retry automatically)',
+      )
+    }
+    // 冷却结束:清闩锁,允许再次尝试加载
+    _modelFailed = false
+    _loadPromise = null
+  }
 
   if (!_loadPromise) {
     _loadPromise = pipeline('feature-extraction', MODEL_NAME, {
@@ -45,6 +64,8 @@ async function getOrLoadPipeline(): Promise<FeatureExtractionPipeline> {
     return _pipe
   } catch (err) {
     _modelFailed = true
+    _lastModelError = err instanceof Error ? err.message : String(err)
+    _retryAt = Date.now() + FAIL_COOLDOWN_MS
     _loadPromise = null
     throw err
   }
@@ -83,8 +104,8 @@ async function processQueue(): Promise<void> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Enqueues a text embedding request. Returns a Promise that resolves with
- * a 384-dimensional Float32Array, or rejects if the model is unavailable.
+ * 入队一个文本嵌入请求。返回 Promise<Float32Array>(512 维);
+ * 模型不可用时 reject。
  */
 export function embed(text: string): Promise<Float32Array> {
   return new Promise<Float32Array>((resolve, reject) => {
@@ -94,9 +115,8 @@ export function embed(text: string): Promise<Float32Array> {
 }
 
 /**
- * Embeds multiple texts sequentially through the existing task queue.
- * Returns per-item results so callers can handle partial failures.
- * Runs one ONNX inference at a time (numThreads=1 constraint).
+ * 顺序嵌入多条文本(同一任务队列,一次一条推理)。
+ * 逐条返回以便调用方容忍部分失败。
  */
 export async function embedBatch(
   texts: string[]

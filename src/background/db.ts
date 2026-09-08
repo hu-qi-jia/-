@@ -1,144 +1,92 @@
+/**
+ * 拼多多客服快捷回复 · IndexedDB 层(Dexie)
+ *
+ * 库名 `PddCSDB`(全新库,无旧数据迁移;旧 AIMemoryDB 由 SW 启动时尝试删除)。
+ *
+ * 表:
+ *   qaRecords — 问答记录(保留期内,问题为检索锚)
+ *   replies   — 客服回复(候选本体,contentHash 折叠)
+ *   goldens   — 金标准(长期,豁免保留期,独立可编辑问答文档)
+ *   folders   — 回复文件夹(两层,parentId=null 即根层)
+ *   errors    — 错误日志
+ *
+ * hasEmbedding 三态:0=待嵌(启动扫描重试) 1=已嵌 -1=嵌入失败(记录 errors,下次启动扫描重试)
+ */
 import Dexie, { type Table } from "dexie";
 import type {
-  ConversationTitle,
   ErrorLog,
-  MemoryRecord,
+  FolderRecord,
+  GoldenRecord,
+  QaRecord,
+  ReplyRecord,
 } from "../types/memory";
-import { normalizeContent } from "./adapters/base";
+import {
+  SELF_TEST_SESSION_KEY,
+  UNCATEGORIZED_FOLDER_ID,
+  UNCATEGORIZED_FOLDER_NAME,
+} from "../types/memory";
 
-export class MemoryDatabase extends Dexie {
-  memories!: Table<MemoryRecord, string>;
+export class PddDatabase extends Dexie {
+  qaRecords!: Table<QaRecord, string>;
+  replies!: Table<ReplyRecord, string>;
+  goldens!: Table<GoldenRecord, string>;
+  folders!: Table<FolderRecord, string>;
   errors!: Table<ErrorLog, number>;
-  conversations!: Table<ConversationTitle, string>;
 
   constructor() {
-    super("AIMemoryDB");
+    super("PddCSDB");
 
-    // v1: adds parentId index to support chunk → parent queries
     this.version(1).stores({
-      memories:
-        "id, sessionId, provider, timestamp, createdAt, parentId, hasEmbedding, [provider+sessionId], [provider+timestamp]",
+      qaRecords:
+        "id, sessionKey, questionHash, questionTs, hasEmbedding, [sessionKey+questionTs]",
+      replies: "id, qaId, contentHash, ts",
+      goldens: "id, folderId, questionHash, hasEmbedding",
+      folders: "id, parentId",
       errors: "++id, timestamp",
-      conversations: "sessionId, updatedAt",
     });
   }
 
-  // ─── Memory Record DAO ──────────────────────────────────────────────────────
+  // ─── 初始化/预置 ──────────────────────────────────────────────────────────────
 
-  async addRecord(record: MemoryRecord): Promise<string> {
-    const recordToSave = {
-      ...record,
-      hasEmbedding: record.embedding && record.embedding.length > 0 ? 1 : 0,
-    };
-    return (await this.memories.add(recordToSave as MemoryRecord)) as string;
-  }
-
-  async updateEmbedding(
-    id: string,
-    embedding: Float32Array,
-    model: string,
-    version: string,
-  ): Promise<void> {
-    await this.memories.update(id, {
-      embedding,
-      embeddingModel: model,
-      embeddingVersion: version,
-      hasEmbedding: 1,
-    });
-  }
-
-  async getPendingEmbeddings(limit = 50): Promise<MemoryRecord[]> {
-    return this.memories
-      .where("hasEmbedding")
-      .equals(0)
-      .filter((r) => !r.isDeleted)
-      .limit(limit)
-      .toArray();
-  }
-
-  /** Soft-delete a record (sets isDeleted = true). */
-  async softDeleteRecord(id: string): Promise<void> {
-    await this.memories.update(id, { isDeleted: true });
-  }
-
-  /** Hard-delete all memory records and conversation titles from the DB. */
-  async clearAllMemories(): Promise<void> {
-    await this.memories.clear();
-    await this.conversations.clear();
-  }
-
-  /** Returns the most recent non-deleted records by createdAt (desc). */
-  async getRecent(limit = 10): Promise<MemoryRecord[]> {
-    return this.memories
-      .orderBy("createdAt")
-      .reverse()
-      .limit(Math.max(limit * 3, 50))
-      .toArray()
-      .then((records) => records.filter((r) => !r.isDeleted).slice(0, limit));
-  }
-
-  async countTotal(): Promise<number> {
-    return this.memories.filter((r) => !r.isDeleted).count();
-  }
-
-  async queryRecords(filters?: {
-    provider?: MemoryRecord["provider"];
-    sessionId?: string;
-    startTime?: number;
-    endTime?: number;
-    limit?: number;
-    offset?: number;
-  }): Promise<{ records: MemoryRecord[]; total: number }> {
-    let collection = this.memories.filter((r) => !r.isDeleted);
-
-    if (filters?.provider) {
-      collection = this.memories
-        .where("provider")
-        .equals(filters.provider)
-        .filter((r) => !r.isDeleted);
+  /**
+   * 确保预置"未分类"文件夹存在(固定 id,导入/编辑幂等)。
+   * 所有新提升的金标准默认入此夹。
+   */
+  async ensurePresetFolders(): Promise<void> {
+    const existing = await this.folders.get(UNCATEGORIZED_FOLDER_ID);
+    if (!existing) {
+      await this.folders.add({
+        id: UNCATEGORIZED_FOLDER_ID,
+        parentId: null,
+        name: UNCATEGORIZED_FOLDER_NAME,
+        position: 0,
+        createdAt: Date.now(),
+      });
     }
-
-    if (filters?.sessionId) {
-      collection = this.memories
-        .where("sessionId")
-        .equals(filters.sessionId)
-        .filter((r) => !r.isDeleted);
-    }
-
-    const all = await collection.sortBy("timestamp");
-    const filtered = all.filter((r) => {
-      if (filters?.startTime && r.timestamp < filters.startTime) return false;
-      if (filters?.endTime && r.timestamp > filters.endTime) return false;
-      return true;
-    });
-
-    const limit = filters?.limit ?? 50;
-    const offset = filters?.offset ?? 0;
-    const total = filtered.length;
-
-    // Slice from the newest end: skip `offset` from the end, then take `limit` before that.
-    // Records are sorted ascending by timestamp, so the most recent are at the end.
-    const endIdx = total - offset;
-    const startIdx = Math.max(0, endIdx - limit);
-    const recentRecords = endIdx > 0 ? filtered.slice(startIdx, endIdx) : [];
-
-    return {
-      records: recentRecords,
-      total,
-    };
   }
 
-  // ─── Error Log DAO ──────────────────────────────────────────────────────────
+  /** 启动时尝试清除旧项目遗留的空库(可选清理,失败静默) */
+  async dropLegacyDbIfExists(dbName: string): Promise<boolean> {
+    try {
+      const names = await Dexie.getDatabaseNames();
+      if (names.includes(dbName)) {
+        await Dexie.delete(dbName);
+        return true;
+      }
+    } catch {
+      /* 静默:库被占用等情况留待用户手动处理 */
+    }
+    return false;
+  }
 
-  async logError(
-    message: string,
-    context?: Record<string, unknown>,
-  ): Promise<void> {
+  // ─── 错误日志 ────────────────────────────────────────────────────────────────
+
+  async logError(message: string, context?: Record<string, unknown>): Promise<void> {
     try {
       await this.errors.add({ timestamp: Date.now(), message, context });
     } catch {
-      // Never throw from error logging
-      console.warn("[AI Memory] Failed to log error to DB:", message);
+      // 错误日志永不抛错
+      console.warn("[PDD CS] Failed to log error:", message);
     }
   }
 
@@ -150,177 +98,260 @@ export class MemoryDatabase extends Dexie {
     await this.errors.clear();
   }
 
-  // ─── Conversation Title DAO ────────────────────────────────────────────────────
+  // ─── 统计(P0 面板用;排除自检示例数据) ───────────────────────────────────────
 
-  /** Upsert a conversation title (create or update). */
-  async upsertConversationTitle(
-    sessionId: string,
-    title: string,
-  ): Promise<void> {
-    await this.conversations.put({
-      sessionId,
-      title: title.trim(),
-      updatedAt: Date.now(),
+  async getStats(): Promise<{
+    qaCount: number;
+    replyCount: number;
+    goldenCount: number;
+    folderCount: number;
+  }> {
+    const selfTestQaCount = await this.qaRecords
+      .where("sessionKey")
+      .equals(SELF_TEST_SESSION_KEY)
+      .count();
+    const [qaTotal, replyCount, goldenCount, folderCount] = await Promise.all([
+      this.qaRecords.count(),
+      this.replies.count(),
+      this.goldens.count(),
+      this.folders.count(),
+    ]);
+    return {
+      qaCount: qaTotal - selfTestQaCount,
+      replyCount,
+      goldenCount,
+      folderCount,
+    };
+  }
+
+  // ─── 问答记录(qaRecords) ──────────────────────────────────────────────────────
+
+  async addQaRecord(record: QaRecord): Promise<string> {
+    await this.qaRecords.add(record);
+    return record.id;
+  }
+
+  /** 会话内按问题哈希查最近一条问答记录(幂等/追加判断用) */
+  async findLatestQaByHash(sessionKey: string, questionHash: string): Promise<QaRecord | undefined> {
+    const hits = await this.qaRecords
+      .where("[sessionKey+questionTs]")
+      .between([sessionKey, Dexie.minKey], [sessionKey, Dexie.maxKey])
+      .filter((r) => r.questionHash === questionHash)
+      .toArray();
+    if (hits.length === 0) return undefined;
+    hits.sort((a, b) => b.questionTs - a.questionTs);
+    return hits[0];
+  }
+
+  async getQaRecord(id: string): Promise<QaRecord | undefined> {
+    return this.qaRecords.get(id);
+  }
+
+  /** 最近问答列表(面板记忆列表基础;P3 完善分页/筛选) */
+  async listQaRecords(limit = 50): Promise<QaRecord[]> {
+    return this.qaRecords
+      .where("sessionKey")
+      .notEqual(SELF_TEST_SESSION_KEY)
+      .sortBy("questionTs")
+      .then((rows) => rows.reverse().slice(0, limit));
+  }
+
+  /** 会话内最近一条问答(分段机:客服回复在无未结问题段时挂到它下面) */
+  async latestQaOfSession(sessionKey: string): Promise<QaRecord | undefined> {
+    const rows = await this.qaRecords
+      .where("[sessionKey+questionTs]")
+      .between([sessionKey, Dexie.minKey], [sessionKey, Dexie.maxKey])
+      .sortBy("questionTs");
+    return rows.length > 0 ? rows[rows.length - 1] : undefined;
+  }
+
+  /** 整条删除:问答记录 + 其下全部回复(记忆列表"删除单条"用) */
+  async deleteQaWithReplies(qaId: string): Promise<void> {
+    await this.transaction("rw", this.qaRecords, this.replies, async () => {
+      await this.replies.where("qaId").equals(qaId).delete();
+      await this.qaRecords.delete(qaId);
     });
   }
 
-  /** Get title for a specific sessionId. */
-  async getConversationTitle(sessionId: string): Promise<string | undefined> {
-    const conv = await this.conversations.get(sessionId);
-    return conv?.title;
+  /** 清空自检示例数据;返回删除的问答条数 */
+  async clearSelfTestRecords(): Promise<number> {
+    const qaIds = await this.qaRecords
+      .where("sessionKey")
+      .equals(SELF_TEST_SESSION_KEY)
+      .primaryKeys();
+    if (qaIds.length === 0) return 0;
+    await this.transaction("rw", this.qaRecords, this.replies, async () => {
+      await this.replies.where("qaId").anyOf(qaIds).delete();
+      await this.qaRecords.bulkDelete(qaIds);
+    });
+    return qaIds.length;
   }
 
-  /** Get titles for multiple sessionIds. Returns a Map<sessionId, title>. */
-  async getConversationTitles(
-    sessionIds: string[],
-  ): Promise<Map<string, string>> {
-    const map = new Map<string, string>();
-    if (sessionIds.length === 0) return map;
+  // ─── 客服回复(replies) ────────────────────────────────────────────────────────
 
-    const convs = await this.conversations.bulkGet(sessionIds);
-    for (const conv of convs) {
-      if (conv) {
-        map.set(conv.sessionId, conv.title);
-      }
-    }
-    return map;
+  async addReply(record: ReplyRecord): Promise<string> {
+    await this.replies.add(record);
+    return record.id;
   }
 
-  /** Delete a conversation title. */
-  async deleteConversationTitle(sessionId: string): Promise<void> {
-    await this.conversations.delete(sessionId);
+  /** 平台 msg_id 幂等查重(网络层来源) */
+  async findReplyByMsgId(msgId: string): Promise<ReplyRecord | undefined> {
+    // msgId 无独立索引,走 qaId 全量过滤开销大;P1 网络层引入时如需高频可升索引
+    return this.replies.filter((r) => r.msgId === msgId).first();
   }
 
-  // ─── Chat History Deduplication ─────────────────────────────────────────────
-
-  /** Returns true if any non-deleted record exists for the given sessionId. */
-  async hasSessionRecords(sessionId: string): Promise<boolean> {
-    const count = await this.memories
-      .where("sessionId")
-      .equals(sessionId)
-      .filter((r) => !r.isDeleted)
+  /** 同内容折叠:某问答下已存在同一归一化文本的回复 */
+  async hasReplyContent(qaId: string, contentHash: string): Promise<boolean> {
+    const count = await this.replies
+      .where("qaId")
+      .equals(qaId)
+      .filter((r) => r.contentHash === contentHash)
       .count();
     return count > 0;
   }
 
-  /**
-   * Bulk existence check for chat_message UUIDs (from Claude conversation history).
-   * Returns only the UUIDs NOT yet stored in the DB.
-   */
-  async filterNewChatMessageUuids(uuids: string[]): Promise<string[]> {
-    if (uuids.length === 0) return [];
-    const existing = await this.memories.bulkGet(uuids);
-    const found = new Set<string>();
-    existing.forEach((r, i) => {
-      if (r) found.add(uuids[i]);
+  async getRepliesForQa(qaId: string): Promise<ReplyRecord[]> {
+    return this.replies.where("qaId").equals(qaId).sortBy("ts");
+  }
+
+  async recountReplyCount(qaId: string): Promise<void> {
+    const count = await this.replies.where("qaId").equals(qaId).count();
+    await this.qaRecords.update(qaId, {
+      replyCount: count,
+      updatedAt: Date.now(),
     });
-    return uuids.filter((id) => !found.has(id));
   }
 
-  // ─── DOM Sync Deduplication ─────────────────────────────────────────────────
+  // ─── 嵌入回填(qaRecords 问题向量 / goldens 问题锚向量) ─────────────────────────
 
-  /**
-   * Checks whether a DOM-sourced message (identified by its ChatGPT messageId)
-   * is already stored in IndexedDB.
-   *
-   * We store DOM messages with id = `dom:${messageId}` so they are distinct
-   * from network-captured records (which use UUIDs or provider IDs).
-   * Chunk records use `dom:${messageId}-c0` etc., so we only check the parent key.
-   */
-  async hasMessageId(messageId: string): Promise<boolean> {
-    const key = `dom:${messageId}`;
-    // A single chunk also means the parent was stored — check both.
-    const direct = await this.memories.get(key);
-    if (direct) return true;
-    const firstChunk = await this.memories.get(`${key}-c0`);
-    return !!firstChunk;
+  async updateQaEmbedding(
+    id: string,
+    embedding: Float32Array,
+    model: string,
+    version: string,
+  ): Promise<void> {
+    await this.qaRecords.update(id, {
+      embedding,
+      embeddingModel: model,
+      embeddingVersion: version,
+      hasEmbedding: 1,
+      updatedAt: Date.now(),
+    });
   }
 
-  /**
-   * Bulk existence check — returns the subset of messageIds NOT yet in the DB.
-   * More efficient than calling hasMessageId() in a loop when dealing with
-   * potentially dozens of DOM messages on first page load.
-   */
-  async filterNewMessageIds(messageIds: string[]): Promise<string[]> {
-    if (messageIds.length === 0) return [];
-    const keys = messageIds.flatMap((mid) => [mid, `${mid}-c0`]);
-    const existing = await this.memories.bulkGet(keys);
-    const foundSet = new Set<string>();
-    for (let i = 0; i < messageIds.length; i++) {
-      // each messageId maps to indices [i*2, i*2+1] in the bulkGet result
-      if (existing[i * 2] || existing[i * 2 + 1]) {
-        foundSet.add(messageIds[i]);
-      }
-    }
-    return messageIds.filter((mid) => !foundSet.has(mid));
+  async updateGoldenEmbedding(
+    id: string,
+    embedding: Float32Array,
+    model: string,
+    version: string,
+  ): Promise<void> {
+    await this.goldens.update(id, {
+      qEmbedding: embedding,
+      embeddingModel: model,
+      embeddingVersion: version,
+      hasEmbedding: 1,
+      updatedAt: Date.now(),
+    });
   }
 
-  /**
-   * Returns the set of content strings for all non-deleted records in a session.
-   * Used by DOM sync to detect migration duplicates (XHR records have random UUIDs
-   * that ID-based dedup cannot match against new DOM-derived stable IDs).
-   */
-  async getSessionContentSet(sessionId: string): Promise<Set<string>> {
-    const records = await this.memories
-      .where('sessionId')
-      .equals(sessionId)
-      .filter((r) => !r.isDeleted)
-      .toArray()
-    return new Set(records.map((r) => normalizeContent(r.content)))
-  }
-}
-
-// Singleton instance shared across background service worker
-export const db = new MemoryDatabase();
-
-// ─── Storage Quota Handling ───────────────────────────────────────────────────
-
-let _captureEnabled = true;
-let _quotaExceeded = false;
-
-export function isCaptureEnabled(): boolean {
-  return _captureEnabled;
-}
-
-export function isQuotaExceeded(): boolean {
-  return _quotaExceeded;
-}
-
-/**
- * Wraps db.addRecord with quota exceeded detection.
- * On QuotaExceededError, disables capture and logs the event.
- */
-export async function safeAddRecord(
-  record: MemoryRecord,
-): Promise<string | null> {
-  if (!_captureEnabled) return null;
-
-  try {
-    return await db.addRecord(record);
-  } catch (err) {
-    const isQuota =
-      err instanceof DOMException &&
-      (err.name === "QuotaExceededError" ||
-        err.name === "NS_ERROR_DOM_QUOTA_REACHED");
-
-    if (isQuota) {
-      _captureEnabled = false;
-      _quotaExceeded = true;
-      await db.logError("QUOTA_EXCEEDED", { recordId: record.id });
-      console.warn("[AI Memory] IndexedDB quota exceeded — capture disabled");
+  async markEmbeddingFailed(kind: "qa" | "golden", id: string): Promise<void> {
+    if (kind === "qa") {
+      await this.qaRecords.update(id, { hasEmbedding: -1 });
     } else {
-      await db.logError("ADD_RECORD_FAILED", {
-        recordId: record.id,
-        error: String(err),
-      });
+      await this.goldens.update(id, { hasEmbedding: -1 });
     }
-    return null;
+  }
+
+  /** 待嵌问答(启动扫描/批量补嵌) */
+  async getPendingQaEmbeddings(limit = 100): Promise<QaRecord[]> {
+    return this.qaRecords.where("hasEmbedding").equals(0).limit(limit).toArray();
+  }
+
+  /** 待嵌金标准 */
+  async getPendingGoldenEmbeddings(limit = 100): Promise<GoldenRecord[]> {
+    return this.goldens.where("hasEmbedding").equals(0).limit(limit).toArray();
+  }
+
+  // ─── 金标准(goldens) ──────────────────────────────────────────────────────────
+
+  async addGolden(record: GoldenRecord): Promise<string> {
+    await this.goldens.add(record);
+    return record.id;
+  }
+
+  async getGolden(id: string): Promise<GoldenRecord | undefined> {
+    return this.goldens.get(id);
+  }
+
+  /** 按问题哈希查重(导入/提升幂等) */
+  async findGoldenByQuestionHash(questionHash: string): Promise<GoldenRecord | undefined> {
+    return this.goldens.where("questionHash").equals(questionHash).first();
+  }
+
+  async updateGolden(id: string, patch: Partial<GoldenRecord>): Promise<void> {
+    await this.goldens.update(id, { ...patch, updatedAt: Date.now() });
+  }
+
+  async deleteGolden(id: string): Promise<void> {
+    await this.goldens.delete(id);
+  }
+
+  async getGoldensByFolder(folderId: string | null): Promise<GoldenRecord[]> {
+    if (folderId === null) {
+      return this.goldens.filter((g) => g.folderId === null).toArray();
+    }
+    return this.goldens.where("folderId").equals(folderId).toArray();
+  }
+
+  // ─── 回复文件夹(folders) ──────────────────────────────────────────────────────
+
+  async listFolders(): Promise<FolderRecord[]> {
+    return this.folders.toArray();
+  }
+
+  async addFolder(record: FolderRecord): Promise<string> {
+    await this.folders.add(record);
+    return record.id;
+  }
+
+  async renameFolder(id: string, name: string): Promise<void> {
+    await this.folders.update(id, { name });
+  }
+
+  async deleteFolder(id: string): Promise<void> {
+    await this.transaction("rw", this.folders, this.goldens, async () => {
+      await this.goldens.where("folderId").equals(id).modify({ folderId: null });
+      await this.folders.delete(id);
+    });
+  }
+
+  // ─── 保留期清理(TTL) ───────────────────────────────────────────────────────────
+
+  /**
+   * 删除 questionTs 早于 now−retentionDays 的问答记录及其回复。
+   * 金标准/文件夹独立于问答记录,不受影响。
+   * 返回删除的问答记录条数。
+   */
+  async purgeExpired(now: number, retentionDays: number): Promise<number> {
+    const cutoff = now - retentionDays * 86_400_000;
+    const expiredIds = await this.qaRecords
+      .where("questionTs")
+      .below(cutoff)
+      .primaryKeys();
+    if (expiredIds.length === 0) return 0;
+
+    await this.transaction("rw", this.qaRecords, this.replies, async () => {
+      await this.replies.where("qaId").anyOf(expiredIds).delete();
+      await this.qaRecords.bulkDelete(expiredIds);
+    });
+    return expiredIds.length;
   }
 }
 
-export const memoryDB = new MemoryDatabase();
+// 单例 —— 全 SW 共享
+export const db = new PddDatabase();
 
-// 只有在開發環境下，把 db 掛載到 globalThis (Service Worker 的全域)
+// 开发态挂到 globalThis 便于 SW 控制台自检(与原项目习惯一致)
 if (process.env.NODE_ENV === "development") {
-  (globalThis as any).aiDB = db;
+  (globalThis as unknown as { pddDb?: PddDatabase }).pddDb = db;
 }

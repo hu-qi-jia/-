@@ -1,4 +1,4 @@
-import type { ThemeMode } from '../i18n/ThemeContext'
+import type { ThemeMode } from './theme-context'
 
 export interface ThemeTokens {
   bg: string

@@ -1,317 +1,114 @@
-import type { AIProvider, ErrorLog, FavoritePrompt, IMemoryExportEnvelope, MemoryRecord, PromptFolder, SerializableMemoryRecord } from './memory'
+// ─── 运行时消息集 ──────────────────────────────────────────────────────────────
+// P0 只保留底座所需(自检/统计);P1 捕获、P2 检索、P3 金标准 CRUD 消息随阶段扩展。
 
-// ─── CAPTURE_MESSAGE ─────────────────────────────────────────────────────────
-// Direction: Content Script → Background Service Worker
+import type { PddRole, PddSettings } from './memory'
 
-export interface CaptureMessage {
-  type: 'CAPTURE_MESSAGE'
-  payload: {
-    provider: AIProvider
-    rawData: unknown
-    url: string
-    timestamp: number
-  }
+// ─── PING_EMBED:嵌入链路自检(popup → SW)───────────────────────────────────────
+// SW 经 offscreen 嵌入一段样本文本,返回模型名与向量维度 —— P0 验收用。
+
+export interface PingEmbedRequest {
+  type: 'PING_EMBED'
 }
 
-export interface CaptureMessageResponse {
-  success: boolean
-  recordId?: string
-  error?: string
-}
-
-// ─── EMBED_REQUEST / EMBED_RESPONSE ──────────────────────────────────────────
-// Direction: Background → Embedding Engine (internal)
-
-export interface EmbedRequest {
-  type: 'EMBED_REQUEST'
-  payload: {
-    text: string
-    recordId: string
-  }
-}
-
-export interface EmbedResponse {
-  type: 'EMBED_RESPONSE'
-  payload: {
-    recordId: string
-    embedding: Float32Array
-    model: string
-    success: boolean
-    error?: string
-  }
-}
-
-// ─── EMBED_BATCH ──────────────────────────────────────────────────────────────
-// Direction: Background Service Worker → Offscreen Document (internal)
-// Batches N texts into a single IPC round-trip for bulk import efficiency.
-
-export interface EmbedBatchRequest {
-  type: 'EMBED_BATCH'
-  payload: { texts: string[] }
-}
-
-// ─── STATUS_UPDATE ────────────────────────────────────────────────────────────
-// Direction: Background → Popup UI
-
-export interface StatusUpdate {
-  type: 'STATUS_UPDATE'
-  payload: {
-    totalRecords: number
-    recentRecords: MemoryRecord[]
-    errors: ErrorLog[]
-    lastCaptureTime?: number
-    quotaExceeded?: boolean
-  }
-}
-
-// ─── QUERY_RECORDS ────────────────────────────────────────────────────────────
-// Direction: Popup → Background
-
-export interface QueryRecordsRequest {
-  type: 'QUERY_RECORDS'
-  payload: {
-    filters?: {
-      provider?: AIProvider
-      sessionId?: string
-      startTime?: number
-      endTime?: number
-      limit?: number
-      offset?: number
-    }
-  }
-}
-
-export interface QueryRecordsResponse {
-  type: 'QUERY_RECORDS_RESPONSE'
-  payload: {
-    records: MemoryRecord[]
-    total: number
-  }
-}
-
-// ─── CLEAR_ERRORS ─────────────────────────────────────────────────────────────
-// Direction: Popup → Background
-
-export interface ClearErrorsRequest {
-  type: 'CLEAR_ERRORS'
-}
-
-export interface ClearErrorsResponse {
-  type: 'CLEAR_ERRORS_RESPONSE'
+export interface PingEmbedResponse {
+  type: 'PING_EMBED_RESPONSE'
   payload: {
     success: boolean
-  }
-}
-
-// ─── DELETE_RECORD ────────────────────────────────────────────────────────────
-// Direction: Popup → Background
-
-export interface DeleteRecordRequest {
-  type: 'DELETE_RECORD'
-  payload: { recordId: string }
-}
-
-export interface DeleteRecordResponse {
-  type: 'DELETE_RECORD_RESPONSE'
-  payload: { success: boolean; error?: string }
-}
-
-// ─── UPDATE_CONVERSATION_TITLE ────────────────────────────────────────────────
-// Direction: Content Script → Background
-
-export interface UpdateConversationTitleRequest {
-  type: 'UPDATE_CONVERSATION_TITLE'
-  payload: { sessionId: string; title: string }
-}
-
-export interface UpdateConversationTitleResponse {
-  type: 'UPDATE_CONVERSATION_TITLE_RESPONSE'
-  payload: { success: boolean; error?: string }
-}
-
-// ─── GET_CONVERSATION_TITLES ───────────────────────────────────────────────────
-// Direction: UI → Background
-
-export interface GetConversationTitlesRequest {
-  type: 'GET_CONVERSATION_TITLES'
-  payload: { sessionIds: string[] }
-}
-
-export interface GetConversationTitlesResponse {
-  type: 'GET_CONVERSATION_TITLES_RESPONSE'
-  payload: { titles: Map<string, string> | Record<string, string> }
-}
-
-// ─── OPEN_MEMORY_PANEL ───────────────────────────────────────────────────────
-// Direction: Background → Content Script
-
-export interface OpenMemoryPanel {
-  type: 'OPEN_MEMORY_PANEL'
-}
-
-// ─── SEARCH_MEMORIES ──────────────────────────────────────────────────────────
-// Direction: UI → Background
-
-export interface SearchMemoriesRequest {
-  type: 'SEARCH_MEMORIES'
-  payload: { query: string; topK?: number }
-}
-
-/** A single search result. Embedding is intentionally excluded (not JSON-serializable). */
-export interface SearchResult {
-  id: string
-  role: string
-  content: string
-  sessionId: string
-  provider: string
-  timestamp: number
-  createdAt: number
-  parentId?: string
-  chunkIndex?: number
-  similarityScore: number
-}
-
-export interface SearchMemoriesResponse {
-  type: 'SEARCH_MEMORIES_RESPONSE'
-  payload: { results: SearchResult[]; query: string; error?: string }
-}
-
-// ─── EXPORT_MEMORIES ─────────────────────────────────────────────────────────
-// Direction: UI (popup / float panel) → Background
-// Background reads the DB, serialises embeddings, and returns a v1.0 envelope.
-
-export interface ExportMemoriesRequest {
-  type: 'EXPORT_MEMORIES'
-}
-
-export interface ExportMemoriesResponse {
-  type: 'EXPORT_MEMORIES_RESPONSE'
-  payload: {
-    envelope: IMemoryExportEnvelope
+    model?: string
+    dimensions?: number
+    elapsedMs?: number
     error?: string
   }
 }
 
-// ─── IMPORT_MEMORIES ─────────────────────────────────────────────────────────
-// Direction: UI (popup / float panel) → Background
-// UI parses and validates the file; background restores embeddings and persists.
+// ─── GET_STATS:库统计(popup → SW)───────────────────────────────────────────────
 
-export interface ImportMemoriesRequest {
-  type: 'IMPORT_MEMORIES'
+export interface GetStatsRequest {
+  type: 'GET_STATS'
+}
+
+export interface GetStatsResponse {
+  type: 'GET_STATS_RESPONSE'
   payload: {
-    records: SerializableMemoryRecord[]
-    prompts?: FavoritePrompt[]
-    folders?: PromptFolder[]
+    qaCount: number
+    replyCount: number
+    goldenCount: number
+    folderCount: number
+    settings: PddSettings
+    embeddingModel: string
   }
 }
 
-export interface ImportMemoriesResponse {
-  type: 'IMPORT_MEMORIES_RESPONSE'
+// ─── SELF_TEST_WRITE:写入/清除自检示例问答(popup → SW)──────────────────────────
+// write: 落一条完整 qaRecords+replies(带真实嵌入回填)用于 P0 入库验证;
+// clean:  按 SELF_TEST_SESSION_KEY 一键清除。
+
+export interface SelfTestWriteRequest {
+  type: 'SELF_TEST_WRITE'
+  payload: { action: 'write' | 'clean' }
+}
+
+export interface SelfTestWriteResponse {
+  type: 'SELF_TEST_WRITE_RESPONSE'
   payload: {
     success: boolean
-    count: number
-    skipped?: number
+    qaId?: string
+    deletedCount?: number
     error?: string
   }
 }
 
-// ─── CLEAR_ALL_MEMORIES ───────────────────────────────────────────────────────
-// Direction: Popup → Background
+// ─── PDD_INGEST:捕获链路(content 桥 → SW)─────────────────────────────────────
+// 页面内采集到的会话事件批量上报;SW 侧做 msgId 幂等 + 分段状态机落盘。
 
-export interface ClearAllMemoriesRequest {
-  type: 'CLEAR_ALL_MEMORIES'
+/** 单条捕获消息(网络层解析产物或 DOM 兜底) */
+export interface PddCapturedMsg {
+  /** 会话标识;DOM 兜底消息可能缺失,由 SW 按来源 tab 回填 */
+  sessionKey?: string
+  source: 'net' | 'dom'
+  role: PddRole
+  text: string
+  /** 平台消息幂等键(网络层 msg_id) */
+  msgId?: string
+  /** 平台时间(毫秒);缺失由接收端补 now */
+  ts?: number
+  buyerIdTail?: string
 }
 
-export interface ClearAllMemoriesResponse {
-  type: 'CLEAR_ALL_MEMORIES_RESPONSE'
-  payload: { success: boolean; error?: string }
+/**
+ * 捕获事件:
+ *  - msg    新消息(买家或客服文本)
+ *  - active 会话激活(可选:回填流开始 / 会话切换提示)
+ *  - idle   该会话超过 3 分钟无动静(页面侧定时器触发,兜底无回复问题落盘)
+ *  - leave  会话失活/页面卸载(关闭未结问题段)
+ */
+export interface PddCapturedEvent {
+  kind: 'msg' | 'active' | 'idle' | 'leave'
+  sessionKey?: string
+  buyerIdTail?: string
+  msg?: PddCapturedMsg
 }
 
-// ─── DOM_SYNC ─────────────────────────────────────────────────────────────────
-// Direction: Content Script → Background Service Worker
-// Triggered once per page-load / SPA-navigation to sync historical messages
-// that predate the network interceptor (i.e. messages already in the DOM).
-//
-// Each DomMessage represents one logical ChatGPT turn discovered via DOM scan.
-// The background deduplicates against IndexedDB before queuing embeddings.
-
-export interface DomMessage {
-  /** data-message-id attribute from the DOM bubble */
-  messageId: string
-  /** 'user' or 'assistant' inferred from turn structure */
-  role: 'user' | 'assistant'
-  /** Visible text content of the bubble */
-  content: string
-  /** conversation-turn index (data-testid="conversation-turn-N") */
-  turnIndex: number
-  /** ChatGPT conversation ID extracted from window.location or DOM */
-  sessionId: string
-  /** Page <title> at scan time — used as conversation label */
-  pageTitle: string
-  /** Unix ms timestamp when the scan ran */
-  scannedAt: number
+export interface PddIngestRequest {
+  type: 'PDD_INGEST'
+  payload: { events: PddCapturedEvent[] }
 }
 
-export interface DomSyncRequest {
-  type: 'DOM_SYNC'
-  payload: {
-    messages: DomMessage[]
-    provider: 'openai' | 'google'
-    url: string
-  }
+export interface PddIngestResponse {
+  type: 'PDD_INGEST_RESPONSE'
+  payload: { queued: number; skipped: number; error?: string; detail?: string }
 }
 
-export interface DomSyncResponse {
-  type: 'DOM_SYNC_RESPONSE'
-  payload: {
-    /** Number of genuinely new messages queued for embedding */
-    queued: number
-    /** Number of messages already in DB (skipped) */
-    skipped: number
-    error?: string
-  }
-}
-
-// ─── Union Types ──────────────────────────────────────────────────────────────
+// ─── 并集 ──────────────────────────────────────────────────────────────────────
 
 export type ExtensionMessage =
-  | CaptureMessage
-  | EmbedRequest
-  | EmbedResponse
-  | EmbedBatchRequest
-  | StatusUpdate
-  | QueryRecordsRequest
-  | QueryRecordsResponse
-  | ClearErrorsRequest
-  | ClearErrorsResponse
-  | DeleteRecordRequest
-  | DeleteRecordResponse
-  | ClearAllMemoriesRequest
-  | ClearAllMemoriesResponse
-  | UpdateConversationTitleRequest
-  | UpdateConversationTitleResponse
-  | GetConversationTitlesRequest
-  | GetConversationTitlesResponse
-  | OpenMemoryPanel
-  | SearchMemoriesRequest
-  | SearchMemoriesResponse
-  | ExportMemoriesRequest
-  | ExportMemoriesResponse
-  | ImportMemoriesRequest
-  | ImportMemoriesResponse
-  | DomSyncRequest
-  | DomSyncResponse
+  | PingEmbedRequest
+  | GetStatsRequest
+  | SelfTestWriteRequest
+  | PddIngestRequest
 
 export type ExtensionMessageResponse =
-  | CaptureMessageResponse
-  | EmbedResponse
-  | QueryRecordsResponse
-  | ClearErrorsResponse
-  | DeleteRecordResponse
-  | ClearAllMemoriesResponse
-  | UpdateConversationTitleResponse
-  | GetConversationTitlesResponse
-  | SearchMemoriesResponse
-  | ExportMemoriesResponse
-  | ImportMemoriesResponse
-  | DomSyncResponse
+  | PingEmbedResponse
+  | GetStatsResponse
+  | SelfTestWriteResponse
+  | PddIngestResponse

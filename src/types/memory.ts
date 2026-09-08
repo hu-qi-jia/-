@@ -1,89 +1,100 @@
-export type MessageRole = 'user' | 'assistant'
+// ─── 拼多多客服快捷回复工具 · 领域存储类型 ──────────────────────────────────────
+// 语义定义见 CONTEXT.md;schema/DAO 见 background/db.ts
+// 全部时间戳为 Unix 毫秒;向量一律 Float32Array(结构化克隆可直存 IndexedDB)
 
-export type AIProvider = 'openai' | 'anthropic' | 'google' | 'xai' | 'perplexity'
+/** 会话消息角色 —— 平台 JSON 中 from.role 的映射(user→buyer, mall_cs→agent) */
+export type PddRole = 'buyer' | 'agent'
 
-export interface MemoryRecord {
-  // Primary Key
+/** 问答记录(qaRecords):一次捕获单元 = 买家问题 + 挂载其下的客服回复;仅存保留期内 */
+export interface QaRecord {
+  /** 主键 uuid */
   id: string
-
-  // Message Content
-  role: MessageRole
-  content: string
-
-  // Provider & Context
-  provider: AIProvider
-  sessionId: string
-  /** Optional parent message/thread id (e.g. ChatGPT parent_message_id) */
-  parentMessageId?: string
-  model?: string
-
-  // Temporal Metadata
-  timestamp: number
-  createdAt: number
-
-  // Chunking (for long content split into overlapping segments)
-  /** 0-based position of this chunk within its logical message. Absent on single-chunk records. */
-  chunkIndex?: number
-  /** ID of the original logical message this chunk belongs to. Absent on single-chunk records. */
-  parentId?: string
-
-  // Semantic Vector
+  /** 会话标识(平台会话 id 归一化);捕获/去重/归并以会话为边界 */
+  sessionKey: string
+  /** 买家 uid 尾号 —— 仅会话内去重与未来筛选,不做检索维度 */
+  buyerIdTail?: string
+  /** 合并后问题全文(买家连续文本) */
+  question: string
+  /** 归一化哈希 —— 幂等/折叠用,索引 */
+  questionHash: string
+  /** 问题块首条消息时间;= 保留期起算点,索引 */
+  questionTs: number
+  /** 问题向量(检索锚);v1 由 offscreen 推理回填 */
   embedding?: Float32Array
-
-  // Embedding Metadata
   embeddingModel?: string
   embeddingVersion?: string
-  hasEmbedding?: number
-
-  // Status Flags
-  isPartial: boolean
-  isDeleted: boolean
-  /** True if this record has been superseded by a newer edit of the same parentMessageId */
-  isSuperseded: boolean
-
-  // Optional Metadata
-  metadata?: Record<string, unknown>
+  /** 0=待嵌 1=已嵌 -1=失败(下次启动扫描重试) */
+  hasEmbedding: number
+  /** 冗余计数:挂载的回复条数 */
+  replyCount: number
+  createdAt: number
+  updatedAt: number
 }
 
-// ─── Memory Export Protocol v1.0 / v1.1 ───────────────────────────────────────
-
-/** Serialised record: embedding is number[] instead of Float32Array for JSON. */
-export type SerializableMemoryRecord = Omit<MemoryRecord, 'embedding'> & {
-  embedding?: number[]
-}
-
-/** A saved favourite prompt (persisted in chrome.storage.local). */
-export interface FavoritePrompt {
+/** 客服回复(replies):候选回复本体;同内容可跨问题复用,故用 contentHash 折叠 */
+export interface ReplyRecord {
+  /** 主键 uuid */
   id: string
+  /** 归属问答记录,索引 */
+  qaId: string
+  /** 回复正文 */
   text: string
-  createdAt: number
+  /** 归一化哈希 —— 弹窗同内容折叠依据,索引 */
+  contentHash: string
+  /** 平台消息幂等键(网络层 msg_id) */
+  msgId?: string
+  /** 平台消息时间 */
+  ts: number
+  /** v1 回复不单独向量化:字段预留,恒 0 */
+  hasEmbedding: number
+  embeddingModel?: string
+  embeddingVersion?: string
 }
 
-/** A folder that organizes prompts. A prompt can be in multiple folders. */
-export interface PromptFolder {
+/** 金标准(goldens):提升时复制的独立"标准问答"文档,豁免保留期,可编辑/删除 */
+export interface GoldenRecord {
+  /** 主键 uuid */
   id: string
+  /** 归属回复文件夹 id;null=尚未入夹(兜底) */
+  folderId: string | null
+  /** 标准问题字段(可编辑) */
+  question: string
+  /** 标准回复字段(可编辑) */
+  answer: string
+  /** 归一化哈希 —— 导入/提升幂等去重 */
+  questionHash: string
+  /** 问题锚向量;编辑保存即作废旧向量、自动重嵌 */
+  qEmbedding?: Float32Array
+  embeddingModel?: string
+  embeddingVersion?: string
+  /** 0=待嵌 1=已嵌 -1=失败 */
+  hasEmbedding: number
+  /** 提升来源溯源(展示用,不参与检索) */
+  sourceRecordId?: string
+  sourceReplyId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** 回复文件夹(folders):金标准的分类树,两层(parentId 为 null 即在根层) */
+export interface FolderRecord {
+  /** 主键;预置"未分类"使用固定 id UNCATEGORIZED_FOLDER_ID */
+  id: string
+  /** 父文件夹 id;null=根层(一层可挂根层) */
+  parentId: string | null
   name: string
-  promptIds: string[]
+  /** 同层排序位置(0 起) */
+  position: number
   createdAt: number
 }
 
-export interface MemoryExportMetadata {
-  app: 'PersonalAIMemoryLayer'
-  version: '1.0' | '1.1' | '1.2'
-  exportedAt: string   // ISO 8601
-  recordCount: number
-  embeddingModel: string
-}
+export const UNCATEGORIZED_FOLDER_ID = 'uncategorized'
+export const UNCATEGORIZED_FOLDER_NAME = '未分类'
 
-export interface IMemoryExportEnvelope {
-  metadata: MemoryExportMetadata
-  payload: SerializableMemoryRecord[]
-  /** v1.1+: favourite prompts from chrome.storage.local */
-  prompts?: FavoritePrompt[]
-  /** v1.2+: prompt folders from chrome.storage.local */
-  folders?: PromptFolder[]
-}
+/** 自检(示例)数据专用会话标识:统计时排除、一键清理 */
+export const SELF_TEST_SESSION_KEY = '__pddcs_selftest__'
 
+/** 错误日志(errors) */
 export interface ErrorLog {
   id?: number
   timestamp: number
@@ -91,11 +102,27 @@ export interface ErrorLog {
   context?: Record<string, unknown>
 }
 
-export interface ConversationTitle {
-  /** Primary key: sessionId (format: provider:conversationId) */
-  sessionId: string
-  /** Title extracted from page <title> element */
-  title: string
-  /** When the title was captured/updated */
-  updatedAt: number
+// ─── 设置(chrome.storage.local) ────────────────────────────────────────────────
+
+export interface PddSettings {
+  /** 直接填充开关:开 → 不弹窗,按优先级填充;默认关 */
+  directFillEnabled: boolean
+  /** 历史回答相似度阈值(0~1),默认 0.5 */
+  simThreshold: number
+  /** 金标准命中阈值(0~1),放宽,默认 0.4 */
+  goldenThreshold: number
+  /** 问答记录保留期天数(30~365),默认 90;金标准/文件夹豁免 */
+  retentionDays: number
+  /** 候选排序"金标准优先"开关,默认开 */
+  goldenPriorityEnabled: boolean
 }
+
+export const DEFAULT_SETTINGS: PddSettings = {
+  directFillEnabled: false,
+  simThreshold: 0.5,
+  goldenThreshold: 0.4,
+  retentionDays: 90,
+  goldenPriorityEnabled: true,
+}
+
+export const SETTINGS_STORAGE_KEY = 'pddcs:settings'

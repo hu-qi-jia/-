@@ -33,7 +33,7 @@ coverage/
 *.tsbuildinfo
 
 specs/
-docs/
+.diag-fresh-profile/
 .cursor/
 .claude/
 .specify/

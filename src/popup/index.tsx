@@ -1,198 +1,334 @@
+/**
+ * Popup — P0 工程底座页
+ *
+ * 展示库统计 + 嵌入自检(验收入口)。
+ * P3 起重写为正式面板:记忆列表 / 回复文件夹 / 知识库(占位)/ 设置。
+ */
+
 import React, { useCallback, useEffect, useState } from 'react'
-import { MemoryMenuContent } from './components/MemoryMenuContent'
-import { MemoryTableView } from './components/MemoryTableView'
-import { FolderView } from './components/FolderView'
-import { SettingsView } from './components/SettingsView'
-import type { StatusUpdate } from '../types/messages'
-import { LanguageProvider, useTranslation } from '../i18n/LanguageContext'
-import { ThemeProvider, useTheme } from '../i18n/ThemeContext'
-import { getThemeTokens } from '../ui/theme'
-import { SunIcon, MoonIcon, GearIcon, ExternalLinkIcon } from '../ui/icons'
-import * as S from '../ui/styles'
-import type { LangCode } from '../i18n/translations'
-
-type View = 'main' | 'memory' | 'folder' | 'settings'
-type DetailView = 'memory' | 'folder'
-
-const AI_ORIGINS = [
-  'https://chat.openai.com',
-  'https://chatgpt.com',
-  // TODO: Implement ClaudeAdapter
-  'https://claude.ai',
-  'https://gemini.google.com',
-]
+import { ThemeProvider, useTheme } from '../ui/theme-context'
+import { getThemeTokens, type ThemeTokens } from '../ui/theme'
+import { SunIcon, MoonIcon, TrashIcon } from '../ui/icons'
+import { sendMessage } from '../utils/message-passing'
+import type {
+  GetStatsResponse,
+  PingEmbedResponse,
+  SelfTestWriteResponse,
+} from '../types/messages'
 
 const POPUP_WIDTH = 360
 
-const THEME_TRANSITION_CSS = `
-.aim-panel * {
-  transition-property: background-color, color, border-color, box-shadow;
-  transition-duration: 0.25s;
-  transition-timing-function: ease;
-}
+const RESET_CSS = `
+html, body { margin: 0; padding: 0; }
+* { box-sizing: border-box; }
 `
 
+type Stats = GetStatsResponse['payload'] | null
+
 function App() {
-  useEffect(() => {
-    const id = 'aim-theme-transition-style'
-    if (document.getElementById(id)) return
-    const el = document.createElement('style')
-    el.id = id
-    el.textContent = THEME_TRANSITION_CSS
-    document.head.appendChild(el)
-  }, [])
-  const [view, setView] = useState<View>('main')
-  const [detailView, setDetailView] = useState<DetailView>('memory')
-  const [activeTabId, setActiveTabId] = useState<number | null>(null)
-  const [isOnAISite, setIsOnAISite] = useState(false)
-  const [dataVersion, setDataVersion] = useState(0)
   const { theme, toggleTheme } = useTheme()
   const tk = getThemeTokens(theme)
-  const { t, lang, setLang, langNames, langCodes } = useTranslation()
+  const [stats, setStats] = useState<Stats>(null)
+  const [busy, setBusy] = useState<string | null>(null) // 进行中的动作名
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
 
-  // Detect AI site
   useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0]
-      if (tab?.id && tab.url && AI_ORIGINS.some((o) => tab.url!.startsWith(o))) {
-        setActiveTabId(tab.id)
-        setIsOnAISite(true)
-      }
-    })
-  }, [])
-
-  // Bump dataVersion on STATUS_UPDATE so MemoryTableView reloads automatically
-  useEffect(() => {
-    const listener = (message: unknown) => {
-      const msg = message as StatusUpdate
-      if (msg.type !== 'STATUS_UPDATE') return
-      setDataVersion((v) => v + 1)
+    const id = 'pddcs-popup-reset-style'
+    if (!document.getElementById(id)) {
+      const el = document.createElement('style')
+      el.id = id
+      el.textContent = RESET_CSS
+      document.head.appendChild(el)
     }
-    chrome.runtime.onMessage.addListener(listener)
-    return () => chrome.runtime.onMessage.removeListener(listener)
   }, [])
 
-  const refreshData = useCallback(() => setDataVersion((v) => v + 1), [])
-
-  // Send OPEN_MEMORY_PANEL to the active AI tab, then close the popup
-  const handleOpenPanel = useCallback(() => {
-    if (!activeTabId) return
-    chrome.tabs
-      .sendMessage(activeTabId, { type: 'OPEN_MEMORY_PANEL' })
-      .catch(() => void 0)
-      .finally(() => window.close())
-  }, [activeTabId])
-
-  const navigateTo = useCallback((target: DetailView) => {
-    setDetailView(target)
-    setView(target)
+  const refreshStats = useCallback(async () => {
+    try {
+      const resp = await sendMessage<GetStatsResponse>({ type: 'GET_STATS' })
+      setStats(resp.payload)
+    } catch (err) {
+      setResult({ ok: false, text: `读取统计失败:${String(err)}` })
+    }
   }, [])
 
-  const goBack = useCallback(() => setView('main'), [])
-  const openSettings = useCallback(() => setView('settings'), [])
+  useEffect(() => {
+    void refreshStats()
+  }, [refreshStats])
 
-  // Slot order: settings(0) | main(1) | detail(2)
-  // Settings slides in from the left, detail slides in from the right — no cross-over.
-  const slideIndex = view === 'settings' ? 0 : view === 'main' ? 1 : 2
+  const withBusy = useCallback(
+    async (name: string, fn: () => Promise<void>) => {
+      setBusy(name)
+      setResult(null)
+      try {
+        await fn()
+      } finally {
+        setBusy(null)
+      }
+    },
+    [],
+  )
+
+  const runPing = () =>
+    withBusy('ping', async () => {
+      const resp = await sendMessage<PingEmbedResponse>({ type: 'PING_EMBED' })
+      const p = resp.payload
+      if (p.success) {
+        setResult({
+          ok: true,
+          text: `自检通过:${p.dimensions} 维向量 · 用时 ${Math.round((p.elapsedMs ?? 0) / 1000)}s`,
+        })
+      } else {
+        setResult({ ok: false, text: `嵌入失败:${p.error ?? '未知错误'}` })
+      }
+      await refreshStats()
+    })
+
+  const writeSample = () =>
+    withBusy('write', async () => {
+      const resp = await sendMessage<SelfTestWriteResponse>({
+        type: 'SELF_TEST_WRITE',
+        payload: { action: 'write' },
+      })
+      if (resp.payload.success) {
+        setResult({
+          ok: true,
+          text: `已写入示例问答(${resp.payload.qaId});首次触发会先下载模型(~25MB),向量稍后回填`,
+        })
+      } else {
+        setResult({
+          ok: false,
+          text: `写入失败:${resp.payload.error ?? '未知错误'}`,
+        })
+      }
+      await refreshStats()
+    })
+
+  const cleanSample = () =>
+    withBusy('clean', async () => {
+      const resp = await sendMessage<SelfTestWriteResponse>({
+        type: 'SELF_TEST_WRITE',
+        payload: { action: 'clean' },
+      })
+      if (resp.payload.success) {
+        setResult({
+          ok: true,
+          text: `已清除示例数据(${resp.payload.deletedCount ?? 0} 条问答)`,
+        })
+      } else {
+        setResult({
+          ok: false,
+          text: `清除失败:${resp.payload.error ?? '未知错误'}`,
+        })
+      }
+      await refreshStats()
+    })
+
+  const s = stats?.settings
 
   return (
     <div
-      className="aim-panel"
       style={{
         width: POPUP_WIDTH,
-        minWidth: POPUP_WIDTH,
-        overflow: 'hidden',
+        padding: '16px',
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
         backgroundColor: tk.bg,
+        color: tk.text,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          width: POPUP_WIDTH * 3,
-          transform: `translateX(-${slideIndex * POPUP_WIDTH}px)`,
-          transition: 'transform 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-      >
-        {/* Slot 0: Settings (slides in from left) */}
-        <div style={{ width: POPUP_WIDTH, flexShrink: 0, opacity: view === 'settings' ? 1 : 0, transition: 'opacity 0.24s ease, background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease' }}>
-          <SettingsView onBack={goBack} onAllDeleted={refreshData} />
+      {/* 头部 */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.02em' }}>
+            拼多多客服快捷回复
+          </div>
+          <div style={{ fontSize: 11, color: tk.textMuted, marginTop: 2 }}>
+            P0 工程底座(阶段验收用)
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          style={{
+            width: 30,
+            height: 30,
+            padding: 0,
+            borderRadius: 9,
+            border: `1px solid ${tk.border}`,
+            backgroundColor: tk.btnBg,
+            color: tk.textMuted,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          title={theme === 'light' ? '切换深色' : '切换浅色'}
+        >
+          {theme === 'light' ? <MoonIcon /> : <SunIcon />}
+        </button>
+      </div>
 
-        {/* Slot 1: Main menu (center) */}
-        <div style={{ width: POPUP_WIDTH, flexShrink: 0, opacity: view === 'main' ? 1 : 0, transition: 'opacity 0.24s ease, background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease' }}>
-          <div style={{ ...S.viewContainer, backgroundColor: tk.bg, color: tk.text }}>
-            {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', color: tk.text }}>AI Memory</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={toggleTheme}
-                  style={{ ...S.iconBtn, backgroundColor: tk.btnBg, borderColor: tk.border, color: tk.textMuted }}
-                  title={theme === 'light' ? t.themeDark : t.themeLight}
-                >
-                  {theme === 'light' ? <MoonIcon /> : <SunIcon />}
-                </button>
-                <button
-                  type="button"
-                  onClick={openSettings}
-                  style={{ ...S.iconBtn, backgroundColor: tk.btnBg, borderColor: tk.border, color: tk.textMuted }}
-                  title={t.settings}
-                >
-                  <GearIcon />
-                </button>
-                <select
-                  value={lang}
-                  onChange={(e) => setLang(e.target.value as LangCode)}
-                  style={{ fontSize: 12, padding: '6px 8px', borderRadius: 10, border: '1px solid', borderColor: tk.inputBorder, backgroundColor: tk.inputBg, color: tk.text, cursor: 'pointer', outline: 'none', minWidth: 88, fontFamily: 'inherit' }}
-                  title={t.language}
-                >
-                  {langCodes.map((code) => (
-                    <option key={code} value={code}>{langNames[code]}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {isOnAISite && (
-              <button
-                type="button"
-                onClick={handleOpenPanel}
-                style={{ ...S.menuBtn, backgroundColor: tk.btnPrimaryBg, borderColor: tk.btnPrimaryBg, color: '#fff' }}
-              >
-                <span style={S.iconWrap}><ExternalLinkIcon /></span>
-                <span>{t.openOnPage}</span>
-              </button>
-            )}
-
-            <MemoryMenuContent
-              onOpenMemory={() => navigateTo('memory')}
-              onOpenFolder={() => navigateTo('folder')}
-              onImported={refreshData}
+      {/* 库统计 */}
+      <Card tk={tk} title="数据统计">
+        {!stats ? (
+          <Row tk={tk} label="读取中…" value="" />
+        ) : (
+          <>
+            <Row tk={tk} label="问答记录" value={String(stats.qaCount)} />
+            <Row tk={tk} label="客服回复" value={String(stats.replyCount)} />
+            <Row tk={tk} label="金标准" value={String(stats.goldenCount)} />
+            <Row tk={tk} label="回复文件夹" value={String(stats.folderCount)} />
+            <Row
+              tk={tk}
+              label="嵌入模型"
+              value={stats.embeddingModel.replace('Xenova/', '')}
+              mono
             />
-          </div>
-        </div>
+            {s && (
+              <Row
+                tk={tk}
+                label="保留期"
+                value={`${s.retentionDays} 天 · 直填${s.directFillEnabled ? '开' : '关'}`}
+              />
+            )}
+          </>
+        )}
+      </Card>
 
-        {/* Slot 2: Detail views — both rendered, toggled to prevent flash during slide-back */}
-        <div style={{ width: POPUP_WIDTH, flexShrink: 0, position: 'relative', opacity: view === 'memory' || view === 'folder' ? 1 : 0, transition: 'opacity 0.24s ease, background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease' }}>
-          <div style={{ display: detailView === 'memory' ? 'flex' : 'none', flexDirection: 'column', height: 580 }}>
-            <MemoryTableView onBack={goBack} onDeleted={refreshData} reloadKey={dataVersion} maxHeight={580} />
-          </div>
-          <div style={{ display: detailView === 'folder' ? 'block' : 'none', maxHeight: 580, overflowY: 'auto' }}>
-            <FolderView onBack={goBack} width={POPUP_WIDTH} />
-          </div>
+      {/* 自检操作 */}
+      <Card tk={tk} title="嵌入自检(P0 验收)">
+        <ActionBtn tk={tk} busy={busy === 'ping'} onClick={runPing} label="运行嵌入自检" />
+        <ActionBtn tk={tk} busy={busy === 'write'} onClick={writeSample} label="写入示例问答(验证入库)" />
+        <ActionBtn tk={tk} busy={busy === 'clean'} onClick={cleanSample} label="清除示例数据" danger />
+      </Card>
+
+      {result && (
+        <div
+          style={{
+            padding: '8px 10px',
+            borderRadius: 8,
+            fontSize: 12,
+            lineHeight: 1.5,
+            backgroundColor: result.ok ? tk.successBg : tk.errorBg,
+            color: result.ok ? tk.successText : tk.errorText,
+          }}
+        >
+          {result.text}
         </div>
+      )}
+
+      <div style={{ fontSize: 11, color: tk.textTertiary, lineHeight: 1.6 }}>
+        P0 阶段仅完成工程底座:新数据库 PddCSDB、bge-small-zh 嵌入链路、TTL 清理框架。
+        捕获(自动记录买家问答)与 AI 回复按钮将在 P1/P2 注入拼多多聊天页。
       </div>
     </div>
   )
 }
 
+// ─── 小组件 ────────────────────────────────────────────────────────────────────
+
+function Card({
+  tk,
+  title,
+  children,
+}: {
+  tk: ThemeTokens
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${tk.border}`,
+        borderRadius: 12,
+        padding: '10px 12px',
+        backgroundColor: tk.bgCard,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 600, color: tk.textMuted }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function Row({
+  tk,
+  label,
+  value,
+  mono,
+}: {
+  tk: ThemeTokens
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+      <span style={{ color: tk.textMuted }}>{label}</span>
+      <span
+        style={{
+          color: tk.text,
+          fontFamily: mono ? 'ui-monospace, Consolas, monospace' : 'inherit',
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  )
+}
+
+function ActionBtn({
+  tk,
+  busy,
+  onClick,
+  label,
+  danger,
+}: {
+  tk: ThemeTokens
+  busy: boolean
+  onClick: () => void
+  label: string
+  danger?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        width: '100%',
+        padding: '8px 10px',
+        borderRadius: 9,
+        border: `1px solid ${danger ? tk.errorBg : tk.btnBorder}`,
+        backgroundColor: danger ? tk.errorBg : tk.btnBg,
+        color: danger ? tk.errorText : tk.text,
+        fontSize: 12.5,
+        fontWeight: 500,
+        cursor: busy ? 'wait' : 'pointer',
+        opacity: busy ? 0.6 : 1,
+        fontFamily: 'inherit',
+      }}
+    >
+      {danger && <TrashIcon size={13} />}
+      {busy ? '处理中…' : label}
+    </button>
+  )
+}
+
 export default function PopupRoot() {
   return (
-    <LanguageProvider>
-      <ThemeProvider>
-        <App />
-      </ThemeProvider>
-    </LanguageProvider>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
   )
 }

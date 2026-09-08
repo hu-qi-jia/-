@@ -1,17 +1,15 @@
 {
-  "name": "personal-ai-memory",
-  "displayName": "Personal AI Memory",
-  "version": "0.0.7",
-  "description": "Silent browser extension that captures web-based AI assistant conversations as private, searchable local memories.",
-  "author": "Mars Wang",
+  "name": "pdd-cs-quick-reply",
+  "displayName": "拼多多客服快捷回复",
+  "version": "0.1.0",
+  "description": "拼多多商家客服快捷回复工具:自动记录买家问答、检索相似回复一键填充、沉淀金标准。基于 personal-ai-memory 本地化改造。",
+  "author": "Personal project",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
     "build:prod": "plasmo build --target=chrome-mv3-prod",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:e2e": "playwright test"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@plasmohq/storage": "^1.13.0",
@@ -33,6 +31,32 @@
     "typescript": "^5.7.3",
     "vitest": "^3.0.7"
   },
+  "manifest": {
+    "permissions": [
+      "storage",
+      "unlimitedStorage",
+      "offscreen",
+      "alarms",
+      "scripting"
+    ],
+    "host_permissions": [
+      "https://mms.pinduoduo.com/*",
+      "https://hf-mirror.com/*"
+    ],
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+    },
+    "action": {
+      "default_title": "拼多多客服快捷回复",
+      "default_popup": "popup.html"
+    },
+    "web_accessible_resources": [
+      {
+        "resources": ["assets/icon.png"],
+        "matches": ["https://mms.pinduoduo.com/*"]
+      }
+    ]
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "@parcel/watcher",
@@ -43,40 +67,6 @@
       "msgpackr-extract",
       "protobufjs",
       "sharp"
-    ]
-  },
-  "manifest": {
-    "host_permissions": [
-      "https://chat.openai.com/*",
-      "https://chatgpt.com/*",
-      "https://claude.ai/*",
-      "https://gemini.google.com/*",
-      "https://www.perplexity.ai/*",
-      "https://grok.com/*"
-    ],
-    "permissions": [
-      "unlimitedStorage",
-      "tabs",
-      "scripting",
-      "offscreen",
-      "activeTab"
-    ],
-    "content_security_policy": {
-      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
-    },
-    "action": {
-      "default_title": "Personal AI Memory"
-    },
-    "web_accessible_resources": [
-      {
-        "resources": [
-          "assets/icon.png",
-          "memory-float-ui*.js"
-        ],
-        "matches": [
-          "<all_urls>"
-        ]
-      }
     ]
   }
 }

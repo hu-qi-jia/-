@@ -1,21 +1,20 @@
 import { MODEL_NAME, EMBEDDING_VERSION } from "./embedding";
 import { db } from "./db";
-import type { MemoryRecord } from "../types/memory";
 
 // ─── Offscreen Document Management ───────────────────────────────────────────
-// Transformers.js (ONNX/WASM) requires DOM APIs not available in Service Workers.
-// We create a hidden offscreen document that has full DOM access, then route
-// embedding requests there via chrome.runtime.sendMessage.
+// Transformers.js (ONNX/WASM) 需要 SW 中不存在的 DOM API,因此创建隐藏
+// offscreen document(tabs/offscreen.html)承载推理,SW 经 chrome.runtime
+// 消息转发嵌入请求。
 
 export const OFFSCREEN_URL = chrome.runtime.getURL("tabs/offscreen.html");
 let _creatingOffscreen = false;
 
-// Texts longer than 2000 chars exceed all-MiniLM-L6-v2's 512-token context window.
-// Truncate before embedding (MVP: simple character truncation).
-export const MAX_EMBED_CHARS = 2000;
+// bge-small-zh-v1.5 的上下文窗口为 512 token;中文大体 1 字 ≈ 1 token,
+// 留安全余量按 1024 字截断(问答文本在此上限内不会损失语义)。
+export const MAX_EMBED_CHARS = 1024;
 
 export async function ensureOffscreenDocument(): Promise<void> {
-  // chrome.runtime.getContexts is available in Chrome 116+
+  // chrome.runtime.getContexts 自 Chrome 116 起可用
   if (chrome.runtime.getContexts) {
     const contexts = await chrome.runtime.getContexts({
       contextTypes: ["OFFSCREEN_DOCUMENT" as chrome.runtime.ContextType],
@@ -25,7 +24,7 @@ export async function ensureOffscreenDocument(): Promise<void> {
   }
 
   if (_creatingOffscreen) {
-    // Wait for an in-progress creation to finish
+    // 等待进行中的创建完成
     await new Promise<void>((resolve) => {
       const poll = setInterval(() => {
         if (!_creatingOffscreen) {
@@ -45,7 +44,7 @@ export async function ensureOffscreenDocument(): Promise<void> {
         "BLOBS" as chrome.offscreen.Reason,
         "WORKERS" as chrome.offscreen.Reason,
       ],
-      justification: "Run ONNX/WASM text embedding inference for AI Memory",
+      justification: "Run ONNX/WASM text embedding inference for quick replies",
     });
   } finally {
     _creatingOffscreen = false;
@@ -124,30 +123,45 @@ export async function embedBatchViaOffscreen(
   });
 }
 
-// ─── Embedding Queue ──────────────────────────────────────────────────────────
+// ─── 单条嵌入入队(捕获/导入落库后触发) ─────────────────────────────────────────
+// v1 只向量化"问题锚"(qaRecords.question 与 goldens.question),回复正文不单独
+// 向量化(参与 BM25 与同内容折叠)。
 
 const EMBED_RETRY_DELAYS_MS = [2000, 5000, 15000];
 
-export function queueEmbedding(record: MemoryRecord, attempt = 0): void {
-  embedViaOffscreen(record.content)
-    .then((embedding) =>
-      db.updateEmbedding(record.id, embedding, MODEL_NAME, EMBEDDING_VERSION),
-    )
+export function queueEmbedding(
+  kind: "qa" | "golden",
+  id: string,
+  text: string,
+  attempt = 0,
+): void {
+  embedViaOffscreen(text)
+    .then((embedding) => {
+      if (kind === "qa") {
+        return db.updateQaEmbedding(id, embedding, MODEL_NAME, EMBEDDING_VERSION);
+      }
+      return db.updateGoldenEmbedding(id, embedding, MODEL_NAME, EMBEDDING_VERSION);
+    })
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       const isConnectionError =
         msg.includes("Receiving end does not exist") ||
         msg.includes("Could not establish connection");
 
-      // Retry transient connection errors (offscreen document not ready yet)
+      // 瞬时连接错误重试(offscreen 尚未就绪等)
       if (isConnectionError && attempt < EMBED_RETRY_DELAYS_MS.length) {
         const delay = EMBED_RETRY_DELAYS_MS[attempt];
-        setTimeout(() => queueEmbedding(record, attempt + 1), delay);
+        setTimeout(() => queueEmbedding(kind, id, text, attempt + 1), delay);
         return;
       }
 
-      // Permanent failure — record stays at hasEmbedding: 0 for startup sweep
-      console.warn("[AI Memory] Embedding failed for record", record.id, err);
-      void db.logError("EMBEDDING_FAILED", { recordId: record.id, error: msg });
+      // 永久失败:hasEmbedding 置 -1 并由启动扫描兜底重试
+      console.warn("[PDD CS] Embedding failed:", kind, id, err);
+      void db.markEmbeddingFailed(kind, id);
+      void db.logError("EMBEDDING_FAILED", {
+        kind,
+        recordId: id,
+        error: msg,
+      });
     });
 }
