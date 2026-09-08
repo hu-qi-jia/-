@@ -15,6 +15,7 @@ import {
 } from "./retrieval";
 import { loadSettings } from "./settings";
 import { normalizeText } from "../utils/text";
+import { kbAnchorText } from "./kbAnchor";
 import type { UiSettings } from "../types/messages";
 
 export interface SearchOutcome {
@@ -76,9 +77,8 @@ export async function searchSuggestions(rawQuery: string): Promise<SearchOutcome
       source: {
         id: k.id,
         kind: "knowledge" as const,
-        // 手工条目锚=标题;文档块锚=块正文(importKbDocument 的向量即嵌正文,
-        // 此处 question 供 BM25 与候选"来源摘要"展示,须与向量锚一致)
-        question: k.source === "doc" ? k.content : k.title,
+        // 锚文本统一走 kbAnchorText(嵌入/BM25/来源摘要同源,见 kbAnchor.ts 注释)
+        question: kbAnchorText(k),
         questionTs: k.updatedAt,
       },
       vec: k.qEmbedding as Float32Array,

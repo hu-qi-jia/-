@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { MODEL_NAME, EMBEDDING_VERSION } from "./embedding";
 import { embedBatchViaOffscreen } from "./offscreen";
+import { kbAnchorText } from "./kbAnchor";
 
 // 启动/导入后批量补嵌:把所有 hasEmbedding=0 的问答/金标准/知识库拉齐向量。
 // 100 条/批 → 每次批处理一次 IPC 往返(原项目习惯保留)。
@@ -92,7 +93,7 @@ export async function processPendingEmbeddings(): Promise<void> {
           pendingKb.map((k) => ({
             kind: "knowledge" as const,
             id: k.id,
-            text: k.title,
+            text: kbAnchorText(k),
           })),
         );
         continue;

@@ -7,7 +7,8 @@
 import { db } from './db'
 import { queueEmbedding } from './offscreen'
 import { hashText, normalizeText } from '../utils/text'
-import { chunkText } from '../utils/chunkText'
+import { chunkMarkdown } from '../utils/mdText'
+import { kbAnchorText } from './kbAnchor'
 import { planKnowledgeEdit } from './knowledgeEdit'
 import type { CreateKbRequest, UpdateKbRequest, UploadKbDocRequest } from '../types/messages'
 
@@ -97,8 +98,9 @@ export async function deleteKnowledge(id: string): Promise<void> {
 }
 
 // ─── md 文档上传(P4-KB)────────────────────────────────────────────────────────
-// 分块逻辑与原项目一致(chunkText:500 字窗口 / 75 重叠);每块一条知识条目,
-// 检索锚 = 块正文(语义检索按内容命中),BM25 同样跑正文;同名文档整篇替换。
+// 结构感知分块(chunkMarkdown):按标题切小节,小节整块保留(≤500 字),超长小节
+// 按行分组、永不截断单行;无结构纯文本回退原 chunkText 滑窗(原项目逻辑兜底)。
+// 每块一条知识条目,检索锚 = 展示标题 + 块正文(kbAnchorText);同名文档整篇替换。
 
 /** 单文档块数上限:超出提示手动拆分(≈4.2 万字,防止一次排几百个嵌入任务) */
 export const MAX_DOC_CHARS = 100_000
@@ -113,7 +115,7 @@ export interface UploadKbDocOutcome {
 export async function importKbDocument(
   payload: UploadKbDocRequest['payload'],
 ): Promise<UploadKbDocOutcome> {
-  // 文档名去扩展名做 docId(展示与幂等键);内容只做首尾清理,不动内部空白(保留 md 排版)
+  // 文档名去扩展名做 docId(展示与幂等键);内容只做首尾清理,不动内部空白
   const docId = normalizeText((payload.name ?? '').replace(/\.(md|markdown|txt)$/i, ''))
   const content = (payload.content ?? '').trim()
   if (!docId) return { error: '文档名为空' }
@@ -122,18 +124,23 @@ export async function importKbDocument(
     return { error: `文档过长(${content.length} 字符,上限 ${MAX_DOC_CHARS}),请拆分后分篇上传` }
   }
 
-  const chunks = chunkText(content)
+  const chunks = chunkMarkdown(content)
   const replaced = (await db.deleteKnowledgeByDoc(docId)) > 0
 
   const now = Date.now()
   const rootId = `kbd-${now}-${Math.random().toString(36).slice(2, 8)}`
+  // 同一小节被拆成多块时,第 2 块起标题加"(续n)"标识同节兄弟块
+  const sectionSeq = new Map<string, number>()
   for (let i = 0; i < chunks.length; i++) {
     const id = chunks.length === 1 ? rootId : `${rootId}-c${i}`
-    const title = chunks.length === 1 ? docId : `${docId} · 段${i + 1}`
+    const base = chunks[i].title ? `${docId} · ${chunks[i].title}` : docId
+    const seq = sectionSeq.get(base) ?? 0
+    sectionSeq.set(base, seq + 1)
+    const title = seq === 0 ? base : `${base} (续${seq + 1})`
     await db.addKnowledge({
       id,
       title,
-      content: chunks[i],
+      content: chunks[i].text,
       questionHash: hashText(`${docId}#${i}`),
       hasEmbedding: 0,
       enabled: 1,
@@ -142,8 +149,8 @@ export async function importKbDocument(
       createdAt: now,
       updatedAt: now,
     })
-    // 锚向量 = 块正文(与手工条目的"标题锚"不同,检索/BM25 由 search.ts 按 source 区分)
-    queueEmbedding('knowledge', id, chunks[i])
+    // 锚 = 展示标题 + 块正文(小节标题语义强,拼进锚提升命中率;与 search.ts 同源)
+    queueEmbedding('knowledge', id, kbAnchorText({ source: 'doc', title, content: chunks[i].text }))
   }
   return { docId, chunkCount: chunks.length, replaced }
 }

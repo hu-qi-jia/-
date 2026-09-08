@@ -1,7 +1,8 @@
 /**
- * P4-KB 文档上传端到端合成验收(纯数据层,一次性 profile):
- *   上传长 md → 按 chunkText(500/75)分块 → 校验块边界与重叠 → 逐块向量回填 →
- *   检索命中块(kind=knowledge,锚=正文)→ 文档块拒编辑 → 整篇重传替换 →
+ * P4-KB 文档上传端到端合成验收(结构感知分块版,纯数据层,一次性 profile):
+ *   上传政策风格 md(标题+小节+列表项)→ chunkMarkdown 按小节切块 →
+ *   校验:无 md 标记残留 / 每条列表项完整不被截断 / 标题含小节名 →
+ *   逐块向量回填 → 检索命中且填充文本干净 → 文档块拒编辑 → 整篇重传替换 →
  *   导出含 source/docId → 幂等再导入 → 清理。
  * 用法:node scripts/verify-kb-doc.mjs
  */
@@ -15,31 +16,30 @@ const PROFILE = ROOT + '\\.diag-fresh-profile'
 const DOC = '售后政策手册'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// 与 src/utils/chunkText.ts 同公式(原项目 500/75)
-const SIZE = 500
-const STEP = 500 - 75
-const expectChunks = (text) => {
-  if (text.length <= SIZE) return [text]
-  const out = []
-  let i = 0
-  while (i < text.length) {
-    out.push(text.slice(i, i + SIZE))
-    i += STEP
+// ── 政策风格 md:文档标题 + 引言 + 8 个小节(各 3 条列表项,节 ~230 字 ≤500 整节成块)──
+const SECTION_TOPICS = [
+  ['退换货条件', ['七天无理由退货需保持吊牌完整与包装完好,配件齐全方可办理', '质量问题自签收之日起十五天内可申请退换货', '已激活使用且超出无理由期限的商品不支持无理由退货']],
+  ['退回运费', ['质量问题退换货的运费由店家承担', '无理由退货的返程运费由买家自理', '运费险赔付以保险条款为准']],
+  ['退款流程', ['买家在订单页发起申请后商家需在四十八小时内处理', '寄回商品验收通过后退款原路返回', '退款进度可在订单详情页实时跟踪']],
+  ['维修与保修', ['保修期以商品页标注为准,质量问题优先换新', '人为损坏如进水摔落不在保修范围', '保修期外可提供付费维修服务']],
+  ['凭证要求', ['质量问题需提供清晰的照片或视频凭证', '凭证需包含商品问题的完整展示', '无法提供凭证时按人为损坏处理']],
+  ['发货时效', ['每日下午四点前下单当天发出', '偏远地区发货时间顺延一天', '预售商品以商品页标注的发货时间为准']],
+  ['发票说明', ['支持开具电子发票,请在订单备注中写明抬头与税号', '电子发票在发货后七个工作日内开出', '发票一经开出不支持换开抬头']],
+  ['售后时段', ['售后客服在线时间为每日九点至二十一点', '非在线时段留言将在上班后优先处理', '平台介入以双方协商无果为前提']],
+]
+const bullets = []
+const parts = ['# 售后政策', '', '以下规则按拼多多平台常规售后规范执行。', '']
+for (const [title, items] of SECTION_TOPICS) {
+  parts.push(`## ${title}`, '')
+  for (const it of items) {
+    parts.push(`- ${it},请以商品详情页的最新说明为准。`, '')
+    bullets.push(`${it},请以商品详情页的最新说明为准。`)
   }
-  return out
 }
-
-// ~1560 字的 md 正文(退货/发货/发票多主题,语义可检索)
-const SECTIONS = []
-for (let s = 1; s <= 12; s++) {
-  SECTIONS.push(
-    `## 第${s}节\n关于售后服务的说明${s}:商品签收后七天内支持无理由退货,需保持吊牌完整与包装完好;` +
-      `质量问题退货由店家承担运费,无理由退货邮费自理;发货时间为每日下午四点前下单当天发出,` +
-      `偏远地区顺延一天;如需开具电子发票,请在订单备注中写明抬头与税号。`,
-  )
-}
-const MD = SECTIONS.join('\n\n')
-const EXPECTED = expectChunks(MD)
+const MD = parts.join('\n')
+const EXPECTED_SECTIONS = SECTION_TOPICS.length + 1 // 8 小节 + 文档标题/引言块
+// 无结构长文本兜底用例(回退 chunkText 滑窗)
+const PLAIN = Array.from({ length: 1500 }, (_, i) => String(i % 10)).join('')
 
 const ctx = await chromium.launchPersistentContext(PROFILE, {
   executablePath: CHROME,
@@ -95,30 +95,33 @@ const send = (type, payload) =>
     { type, payload },
   )
 
-// ── 1. 上传 md → 分块数量与预期一致(原项目公式)──
+// ── 1. 上传 → 按小节分块(9 块:引言 + 8 节)──
 const up = await send('UPLOAD_KB_DOC', { name: `${DOC}.md`, content: MD })
 check(
-  `上传成功且分块数 = ${EXPECTED.length}(500字/75重叠)`,
-  up.docId === DOC && up.chunkCount === EXPECTED.length && up.replaced === false,
+  `上传成功且分块数 = ${EXPECTED_SECTIONS}(按小节整块)`,
+  up.docId === DOC && up.chunkCount === EXPECTED_SECTIONS && up.replaced === false,
   JSON.stringify(up).slice(0, 160),
 )
 
-// ── 2. 块内容/边界/重叠与原项目公式逐一比对 ──
+// ── 2. 块质量:无 md 残留 / 列表项完整 / 标题含小节名 ──
 const sw = ctx.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'))
 const dbChunks = await sw.evaluate(async (docId) => {
   const rows = await globalThis.pddDb.listKnowledgeByDoc(docId)
   return rows
-    .map((r) => ({ id: r.id, title: r.title, content: r.content, source: r.source, hasEmbedding: r.hasEmbedding }))
+    .map((r) => ({ id: r.id, title: r.title, content: r.content, source: r.source }))
     .sort((a, b) => a.title.localeCompare(b.title, 'zh', { numeric: true }))
 }, DOC)
-let boundsOk = dbChunks.length === EXPECTED.length
-for (let i = 0; i < Math.min(dbChunks.length, EXPECTED.length) && boundsOk; i++) {
-  boundsOk =
-    dbChunks[i].content === EXPECTED[i] &&
-    dbChunks[i].source === 'doc' &&
-    (EXPECTED.length === 1 || dbChunks[i].title === `${DOC} · 段${i + 1}`)
-}
-check('每块正文与 chunkText 公式一致(含 75 字重叠)、source=doc、标题带段号', boundsOk)
+const allText = dbChunks.map((c) => c.content).join('\n')
+const noMd = dbChunks.every((c) => !c.content.includes('#') && !/^[-*+]\s/m.test(c.content))
+const intact = bullets.every((b) => allText.includes(b)) // 每条列表项完整出现
+const titlesOk =
+  dbChunks.some((c) => c.title === `${DOC} · 售后政策` && c.content.includes('按拼多多平台常规售后规范执行')) && // `#` 一级标题节
+  SECTION_TOPICS.every(([t]) => dbChunks.some((c) => c.title === `${DOC} · ${t}`))
+check(
+  '无 md 标记残留、每条列表项完整、标题含小节名',
+  dbChunks.length === EXPECTED_SECTIONS && dbChunks.every((c) => c.source === 'doc') && noMd && intact && titlesOk,
+  noMd && intact ? `块数=${dbChunks.length}` : `块数=${dbChunks.length} noMd=${noMd} intact=${intact}`,
+)
 
 // ── 3. 逐块向量回填(首跑含模型下载,预算 ~5 分钟)──
 let allEmbedded = false
@@ -131,51 +134,73 @@ for (let i = 0; i < 100 && !allEmbedded; i++) {
   allEmbedded = rows.length > 0 && rows.every((h) => h === 1)
   if (i === 20) console.log('…模型下载/推理中(20×3s)')
 }
-check(`${EXPECTED.length} 块全部向量回填(hasEmbedding=1)`, allEmbedded)
+check(`${EXPECTED_SECTIONS} 块全部向量回填(hasEmbedding=1)`, allEmbedded)
 
-// ── 4. 检索命中块:锚=正文(语义+BM25 均跑正文)──
-const sug = await send('GET_SUGGESTIONS', { query: '签收后七天内可以无理由退货吗' })
+// ── 4. 检索命中:kind=knowledge,填充文本干净、语义完整、来源显示小节名 ──
+const Q = '商品进水摔坏了还能保修吗'
+const sug = await send('GET_SUGGESTIONS', { query: Q })
 const docIds = new Set(dbChunks.map((c) => c.id))
 const hit = (sug.suggestions ?? []).find((s) => docIds.has(s.sourceId))
 check(
-  '检索命中文档块(kind=knowledge)',
+  '检索命中小节块(kind=knowledge)',
   hit?.kind === 'knowledge' && docIds.has(hit.sourceId),
-  hit ? `score=${hit.score.toFixed(2)} src=${hit.sourceQuestion.slice(0, 18)}…` : `无候选:${JSON.stringify(sug).slice(0, 140)}`,
+  hit ? `score=${hit.score.toFixed(2)} src=${hit.sourceQuestion}` : `无候选:${JSON.stringify(sug).slice(0, 140)}`,
+)
+check(
+  '候选填充文本无 md 符号且含完整相关条目',
+  !!hit &&
+    !hit.text.includes('#') &&
+    allText.includes(hit.text) &&
+    hit.text.includes('人为损坏如进水摔落不在保修范围'),
+  hit ? `text=${hit.text.slice(0, 30)}…` : '',
 )
 
-// ── 5. 文档块拒编辑(锚=正文,改标题会嵌错文本)──
+// ── 5. 文档块拒编辑 ──
 const edit = await send('UPDATE_KB', { id: dbChunks[0].id, title: '改名' })
 check('文档块直接编辑被拒', !!edit.error, edit.error ?? '')
 
-// ── 6. 整篇重传替换(不产生重复块)──
-const MD2 = MD + '\n\n## 附录\n退换货流程:申请-审核-寄回-验收-退款,全程可在订单页跟踪。'
-const EXPECTED2 = expectChunks(MD2)
-const up2 = await send('UPLOAD_KB_DOC', { name: `${DOC}.md`, content: MD2 })
+// ── 6. 整篇重传替换(追加一节,不产生重复块)──
+const parts2 = [...parts.slice(0, -1), `## 附录\n\n- 退换货全程可在订单页跟踪处理进度。`].join('\n') + '\n'
+const up2 = await send('UPLOAD_KB_DOC', { name: `${DOC}.md`, content: parts2 })
 const count2 = await sw.evaluate(async (docId) => (await globalThis.pddDb.listKnowledgeByDoc(docId)).length, DOC)
 check(
-  `重传整篇替换( replaced=true,块数 ${EXPECTED.length}→${EXPECTED2.length},无重复)`,
-  up2.replaced === true && up2.chunkCount === EXPECTED2.length && count2 === EXPECTED2.length,
+  `重传整篇替换( replaced=true,块数 ${EXPECTED_SECTIONS}→${EXPECTED_SECTIONS + 1},无重复)`,
+  up2.replaced === true && up2.chunkCount === EXPECTED_SECTIONS + 1 && count2 === EXPECTED_SECTIONS + 1,
   `replaced=${up2.replaced} chunkCount=${up2.chunkCount} 实际=${count2}`,
 )
 
-// ── 7. 导出含 source/docId(剥向量)→ 幂等再导入 ──
+// ── 7. 无结构纯文本回退滑窗(原项目 chunkText 兜底)──
+const up3 = await send('UPLOAD_KB_DOC', { name: `无结构笔记.md`, content: PLAIN })
+const plainChunks = await sw.evaluate(async (docId) => {
+  const rows = await globalThis.pddDb.listKnowledgeByDoc(docId)
+  const ids = rows.map((r) => r.id)
+  await globalThis.pddDb.deleteKnowledgeByDoc(docId)
+  return ids
+}, '无结构笔记')
+check(
+  '无结构纯文本回退滑窗分块(块数>1)并清理',
+  up3.chunkCount === plainChunks.length && up3.chunkCount > 1,
+  `chunkCount=${up3.chunkCount}`,
+)
+
+// ── 8. 导出含 source/docId(剥向量)→ 幂等再导入 ──
 const exp = await send('EXPORT_DATA', { includeMemory: false })
 const docKb = (exp.envelope?.knowledge ?? []).filter((k) => k.docId === DOC)
 check(
   '导出携带文档块(source=doc、docId、无向量字段)',
-  docKb.length === EXPECTED2.length && docKb.every((k) => k.source === 'doc' && !('qEmbedding' in k)),
+  docKb.length === EXPECTED_SECTIONS + 1 && docKb.every((k) => k.source === 'doc' && !('qEmbedding' in k)),
   `knowledge=${exp.envelope?.knowledge?.length}`,
 )
 const reimp = await send('IMPORT_DATA', { envelope: exp.envelope })
 check(
   '原样再导入幂等(块全跳过)',
-  (reimp.addedKnowledge ?? 0) === 0 && (reimp.skippedKnowledge ?? 0) >= EXPECTED2.length,
+  (reimp.addedKnowledge ?? 0) === 0 && (reimp.skippedKnowledge ?? 0) >= EXPECTED_SECTIONS + 1,
   JSON.stringify(reimp).slice(0, 180),
 )
 
-// ── 8. 清理 ──
+// ── 9. 清理 ──
 const cleaned = await sw.evaluate(async (docId) => globalThis.pddDb.deleteKnowledgeByDoc(docId), DOC)
-check('清理:整篇文档块已删除', cleaned === EXPECTED2.length, `deleted=${cleaned}`)
+check('清理:整篇文档块已删除', cleaned === EXPECTED_SECTIONS + 1, `deleted=${cleaned}`)
 
 const failed = results.filter((r) => !r.ok)
 console.log(`\n=== KB 文档上传验收:${results.length - failed.length}/${results.length} 通过 ===`)

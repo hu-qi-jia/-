@@ -4,6 +4,7 @@
  */
 import { db } from "./db";
 import { queueEmbedding } from "./offscreen";
+import { kbAnchorText } from "./kbAnchor";
 import { loadSettings, saveSettings } from "./settings";
 import {
   EXPORT_VERSION,
@@ -101,7 +102,7 @@ export async function importData(message: ImportDataRequest): Promise<ImportOutc
     );
     const kbPlan = planKnowledgeImports(asArray(env.knowledge), existingKbHashes);
     if (kbPlan.toAdd.length > 0) await db.knowledge.bulkAdd(kbPlan.toAdd);
-    for (const k of kbPlan.toAdd) queueEmbedding("knowledge", k.id, k.title);
+    for (const k of kbPlan.toAdd) queueEmbedding("knowledge", k.id, kbAnchorText(k));
 
     // 3) 记忆搬库(可选部分;问答重嵌排队)
     let addedQa = 0;
