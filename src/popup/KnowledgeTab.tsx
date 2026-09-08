@@ -17,11 +17,19 @@ import type {
   UpdateKbResponse,
   UploadKbDocResponse,
 } from '../types/messages'
-import { Btn, Notice, cardStyle, formatTs, inputStyle, type NoticeMsg } from './ui-bits'
-import { BookOpenIcon, FileTextIcon, PlusIcon, SearchIcon, UploadIcon } from '../ui/icons'
-
-const KB = '#0d8a6c'
-const KB_BG = 'rgba(16,163,127,0.12)'
+import {
+  Badge,
+  Btn,
+  Card,
+  EmptyState,
+  Notice,
+  SearchInput,
+  formatTs,
+  inputStyle,
+  type NoticeMsg,
+} from '../ui/components'
+import { fontSize, fontWeight, spacing } from '../ui/design'
+import { BookOpenIcon, FileTextIcon, PlusIcon, UploadIcon } from '../ui/icons'
 
 export function KnowledgeTab({
   tk,
@@ -89,7 +97,7 @@ export function KnowledgeTab({
       } else {
         setMsg({
           ok: true,
-          text: `已导入《${resp.payload.docId}》:${resp.payload.chunkCount} 块${resp.payload.replaced ? '(替换旧版)' : ''},后台逐块向量化`,
+          text: `已导入《${resp.payload.docId}》共 ${resp.payload.chunkCount} 块${resp.payload.replaced ? '(已替换旧版)' : ''},后台逐块向量化`,
         })
         await refresh()
       }
@@ -101,7 +109,8 @@ export function KnowledgeTab({
     }
   }
 
-  const submitCreate = async () => {    try {
+  const submitCreate = async () => {
+    try {
       const resp = await sendMessage<CreateKbResponse>({
         type: 'CREATE_KB',
         payload: { title: newTitle, content: newContent },
@@ -109,7 +118,7 @@ export function KnowledgeTab({
       if (resp.payload.error) setMsg({ ok: false, text: `新建失败:${resp.payload.error}` })
       else if (resp.payload.exists) setMsg({ ok: false, text: '已存在相同标题的知识条目' })
       else {
-        setMsg({ ok: true, text: '已创建(后台自动向量化)' })
+        setMsg({ ok: true, text: '已创建,后台将自动向量化' })
         await refresh()
       }
     } catch (err) {
@@ -140,7 +149,7 @@ export function KnowledgeTab({
       }
       setMsg({
         ok: true,
-        text: resp.payload.reembed ? '已保存,正在重新生成标题向量…' : '已保存',
+        text: resp.payload.reembed ? '已保存,正在重新生成标题向量' : '已保存',
       })
       await refresh()
     } catch (err) {
@@ -168,7 +177,7 @@ export function KnowledgeTab({
         type: 'FILL_INPUT',
         payload: { text: k.content },
       })
-      if (resp.payload.success) setMsg({ ok: true, text: '已填充到聊天页输入框 · 请手动发送' })
+      if (resp.payload.success) setMsg({ ok: true, text: '已填充至输入框,发送由人工完成' })
       else setMsg({ ok: false, text: resp.payload.error ?? '填充失败' })
     } catch (err) {
       setMsg({ ok: false, text: `填充失败:${String(err)}` })
@@ -203,13 +212,13 @@ export function KnowledgeTab({
   }
 
   if (loading) {
-    return <div style={{ fontSize: 12, color: tk.textMuted }}>读取中…</div>
+    return <div style={{ fontSize: fontSize.secondary, color: tk.textMuted }}>读取中…</div>
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
       {creating ? (
-        <div style={cardStyle(tk, { padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 })}>
+        <Card tk={tk} style={{ padding: `${spacing.xl - 2}px ${spacing.xl + 2}px`, gap: spacing.md }}>
           <input
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
@@ -222,21 +231,21 @@ export function KnowledgeTab({
             value={newContent}
             onChange={(e) => setNewContent(e.target.value)}
             rows={4}
-            placeholder="正文(填充/复制的内容)"
+            placeholder="正文(填充与复制的内容)"
             className="pddcs-input"
             style={inputStyle(tk, { resize: 'vertical' })}
           />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <Btn tk={tk} variant="primary" onClick={() => void submitCreate()}>
-              创建(自动向量化)
+          <div style={{ display: 'flex', gap: spacing.sm }}>
+            <Btn tk={tk} variant="primary" onClick={() => void submitCreate()} title="创建后自动向量化">
+              创建
             </Btn>
             <Btn tk={tk} variant="ghost" onClick={() => setCreating(false)}>
               取消
             </Btn>
           </div>
-        </div>
+        </Card>
       ) : (
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: spacing.sm }}>
           <Btn tk={tk} variant="primary" onClick={() => setCreating(true)}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <PlusIcon size={12} strokeWidth={2.2} />新建条目
@@ -262,60 +271,36 @@ export function KnowledgeTab({
         }}
       />
 
-      <div style={{ position: 'relative' }}>
-        <span
-          style={{
-            position: 'absolute',
-            left: 11,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: tk.textTertiary,
-            display: 'flex',
-            pointerEvents: 'none',
-          }}
-        >
-          <SearchIcon size={13} strokeWidth={2} />
-        </span>
-        <input
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          placeholder="搜索标题或正文…"
-          className="pddcs-input"
-          style={inputStyle(tk, { paddingLeft: 30 })}
-        />
-      </div>
+      <SearchInput tk={tk} value={keyword} onChange={setKeyword} placeholder="搜索标题或正文" />
 
       <Notice tk={tk} msg={msg} />
 
       {shown.length === 0 && (
-        <div style={{ fontSize: 12, color: tk.textTertiary, padding: '14px 0', textAlign: 'center', lineHeight: 1.7 }}>
+        <EmptyState tk={tk}>
           {items.length === 0 ? (
             <>
-              还没有知识条目。
+              暂无知识条目
               <br />
-              把常用话术按"标题+正文"沉淀在这里,
-              <br />
-              检索时会作为独立来源参与匹配。
+              以「标题 + 正文」沉淀常用话术,检索时作为独立来源匹配
             </>
           ) : (
             '没有匹配的条目'
           )}
-        </div>
+        </EmptyState>
       )}
 
       {shown.map((k) => {
         const editing = editingId === k.id
         const disabled = k.enabled !== 1
         return (
-          <div
+          <Card
             key={k.id}
-            style={cardStyle(tk, {
-              padding: '10px 12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
+            tk={tk}
+            style={{
+              padding: `${spacing.xl - 2}px ${spacing.xl + 2}px`,
+              gap: spacing.sm + 1,
               opacity: disabled ? 0.55 : 1,
-            })}
+            }}
           >
             {editing ? (
               <>
@@ -332,9 +317,9 @@ export function KnowledgeTab({
                   className="pddcs-input"
                   style={inputStyle(tk, { resize: 'vertical' })}
                 />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <Btn tk={tk} variant="primary" onClick={() => void submitEdit()}>
-                    保存(改标题自动重嵌)
+                <div style={{ display: 'flex', gap: spacing.sm }}>
+                  <Btn tk={tk} variant="primary" onClick={() => void submitEdit()} title="标题实质变更时自动重新生成向量">
+                    保存
                   </Btn>
                   <Btn tk={tk} variant="ghost" onClick={() => setEditingId(null)}>
                     取消
@@ -343,49 +328,39 @@ export function KnowledgeTab({
               </>
             ) : (
               <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 3,
-                  backgroundColor: KB_BG,
-                  color: KB,
-                  borderRadius: 9999,
-                  fontSize: 10,
-                  padding: '2px 8px',
-                  fontWeight: 600,
-                }}
-              >
-                {k.source === 'doc' ? (
-                  <>
-                    <FileTextIcon size={10} strokeWidth={2.2} />文档
-                  </>
-                ) : (
-                  <>
-                    <BookOpenIcon size={10} strokeWidth={2.2} />知识库
-                  </>
-                )}
-              </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
+                  <Badge
+                    tk={tk}
+                    tone="knowledge"
+                    icon={
+                      k.source === 'doc' ? (
+                        <FileTextIcon size={10} strokeWidth={2.2} />
+                      ) : (
+                        <BookOpenIcon size={10} strokeWidth={2.2} />
+                      )
+                    }
+                  >
+                    {k.source === 'doc' ? '文档' : '知识库'}
+                  </Badge>
                   {disabled && (
-                    <span style={{ fontSize: 10, color: tk.textMuted }}>已停用</span>
+                    <span style={{ fontSize: fontSize.caption, color: tk.textMuted }}>已停用</span>
                   )}
                   {!disabled && k.hasEmbedding === 0 && (
-                    <span style={{ fontSize: 10, color: tk.textMuted }}>向量生成中…</span>
+                    <span style={{ fontSize: fontSize.caption, color: tk.textMuted }}>向量生成中</span>
                   )}
                   {!disabled && k.hasEmbedding === -1 && (
-                    <span style={{ fontSize: 10, color: tk.errorText }}>嵌入失败(重启扩展重试)</span>
+                    <span style={{ fontSize: fontSize.caption, color: tk.errorText }}>嵌入失败,重启扩展后重试</span>
                   )}
-                  <span style={{ marginLeft: 'auto', fontSize: 10, color: tk.textMuted }}>
+                  <span style={{ marginLeft: 'auto', fontSize: fontSize.caption, color: tk.textTertiary, fontVariantNumeric: 'tabular-nums' }}>
                     {formatTs(k.updatedAt)}
                   </span>
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.45, wordBreak: 'break-word' }}>
+                <div style={{ fontSize: fontSize.body, fontWeight: fontWeight.semibold, lineHeight: 1.45, wordBreak: 'break-word' }}>
                   {k.title}
                 </div>
                 <div
                   style={{
-                    fontSize: 11.5,
+                    fontSize: fontSize.secondary,
                     color: tk.textMuted,
                     lineHeight: 1.5,
                     whiteSpace: 'pre-wrap',
@@ -398,8 +373,8 @@ export function KnowledgeTab({
                 >
                   {k.content}
                 </div>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <Btn tk={tk} variant="primary" disabled={disabled} onClick={() => void fillKb(k)} title="填充到聊天页输入框(不自动发送)">
+                <div style={{ display: 'flex', gap: spacing.xs, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Btn tk={tk} variant="primary" disabled={disabled} onClick={() => void fillKb(k)} title="填充到聊天页输入框,发送由人工完成">
                     填充
                   </Btn>
                   <Btn tk={tk} disabled={disabled} onClick={() => void copyKb(k)}>
@@ -410,13 +385,13 @@ export function KnowledgeTab({
                       编辑
                     </Btn>
                   )}
-                  <Btn tk={tk} title={disabled ? '启用(重新参与检索)' : '停用(保留数据,不参与检索)'} onClick={() => void toggleEnabled(k)}>
+                  <Btn tk={tk} title={disabled ? '启用后重新参与检索' : '停用后保留数据,不参与检索'} onClick={() => void toggleEnabled(k)}>
                     {disabled ? '启用' : '停用'}
                   </Btn>
                   {confirmDeleteId === k.id ? (
                     <>
                       <Btn tk={tk} variant="danger" onClick={() => void deleteKb(k.id)}>
-                        确认删
+                        确认
                       </Btn>
                       <Btn tk={tk} variant="ghost" onClick={() => setConfirmDeleteId(null)}>
                         取消
@@ -430,17 +405,13 @@ export function KnowledgeTab({
                 </div>
               </>
             )}
-          </div>
+          </Card>
         )
       })}
 
-      <div style={{ fontSize: 10.5, color: tk.textTertiary, lineHeight: 1.6 }}>
-        金标准沉淀"真实问答对",知识库沉淀"常用话术卡";检索层级为 金标准 &gt; 知识库 &gt; 历史记录。
-        上传 .md 文档会按 500 字/75 重叠自动分块并逐块向量化(与旧项目同逻辑);
-        文档块只读,同名文件重新上传即整篇替换。
+      <div style={{ fontSize: fontSize.caption, color: tk.textTertiary, lineHeight: 1.6 }}>
+        检索层级:金标准 &gt; 知识库 &gt; 历史记录。.md 文档按 500 字/75 重叠自动分块;文档块只读,同名文档重新上传即整篇替换。
       </div>
     </div>
   )
 }
-
-// ─── 小工具 ────────────────────────────────────────────────────────────────────

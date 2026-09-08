@@ -12,8 +12,16 @@ import type {
   MemoryListItem,
 } from '../types/messages'
 import { filterQaRecords, remainingDays } from '../utils/panelLogic'
-import { Btn, Notice, cardStyle, formatTs, inputStyle, type NoticeMsg } from './ui-bits'
-import { SearchIcon } from '../ui/icons'
+import {
+  Btn,
+  Card,
+  EmptyState,
+  Notice,
+  SearchInput,
+  formatTs,
+  type NoticeMsg,
+} from '../ui/components'
+import { fontSize, fontWeight, spacing } from '../ui/design'
 
 export function MemoryListTab({
   tk,
@@ -67,8 +75,8 @@ export function MemoryListTab({
       })
       const p = resp.payload
       if (p.error) setMsg({ ok: false, text: `设金失败:${p.error}` })
-      else if (p.exists) setMsg({ ok: true, text: '相同问题的金标准已存在,未重复创建' })
-      else setMsg({ ok: true, text: '已设为金标准(后台自动向量化)' })
+      else if (p.exists) setMsg({ ok: true, text: '该问题的金标准已存在,未重复创建' })
+      else setMsg({ ok: true, text: '已设为金标准,后台将自动向量化' })
     } catch (err) {
       setMsg({ ok: false, text: `设金失败:${String(err)}` })
     }
@@ -81,7 +89,7 @@ export function MemoryListTab({
         payload: { id },
       })
       if (resp.payload.success) {
-        setMsg({ ok: true, text: '已删除该条问答(含回复)' })
+        setMsg({ ok: true, text: '已删除该问答及其回复' })
         await load()
         await onDataChanged()
       } else {
@@ -94,55 +102,31 @@ export function MemoryListTab({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ position: 'relative' }}>
-        <span
-          style={{
-            position: 'absolute',
-            left: 11,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: tk.textTertiary,
-            display: 'flex',
-            pointerEvents: 'none',
-          }}
-        >
-          <SearchIcon size={13} strokeWidth={2} />
-        </span>
-        <input
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          placeholder="搜索历史问题…"
-          className="pddcs-input"
-          style={inputStyle(tk, { paddingLeft: 30 })}
-        />
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
+      <SearchInput tk={tk} value={keyword} onChange={setKeyword} placeholder="搜索历史问题" />
 
       <Notice tk={tk} msg={msg} />
 
-      {loading && <div style={{ fontSize: 12, color: tk.textMuted }}>读取中…</div>}
+      {loading && <div style={{ fontSize: fontSize.secondary, color: tk.textMuted }}>读取中…</div>}
       {!loading && shown.length === 0 && (
-        <div style={{ fontSize: 12, color: tk.textTertiary, padding: '22px 0', textAlign: 'center', lineHeight: 1.8 }}>
+        <EmptyState tk={tk}>
           {items.length === 0 ? (
             <>
-              还没有记录。打开拼多多聊天页,
+              暂无记录
               <br />
-              与买家对话后会自动捕获问答。
+              在聊天页与买家对话后将自动捕获
             </>
           ) : (
             '没有匹配的问题'
           )}
-        </div>
+        </EmptyState>
       )}
 
       {shown.map((item) => {
         const days = remainingDays(item.questionTs, now, retentionDays)
         const expanded = !collapsedIds.has(item.id)
         return (
-          <div
-            key={item.id}
-            style={cardStyle(tk, { padding: '10px 12px' })}
-          >
+          <Card key={item.id} tk={tk} style={{ padding: `${spacing.xl - 2}px ${spacing.xl + 2}px`, gap: 0 }}>
             {/* 问题行 */}
             <div
               onClick={() =>
@@ -157,8 +141,8 @@ export function MemoryListTab({
             >
               <div
                 style={{
-                  fontSize: 12.5,
-                  fontWeight: 600,
+                  fontSize: fontSize.body,
+                  fontWeight: fontWeight.semibold,
                   lineHeight: 1.45,
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
@@ -169,35 +153,33 @@ export function MemoryListTab({
               >
                 {item.question}
               </div>
-              <div style={{ fontSize: 10.5, color: tk.textMuted, marginTop: 3 }}>
+              <div style={{ fontSize: fontSize.caption, color: tk.textTertiary, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
                 {formatTs(item.questionTs)} · {item.replyCount} 条回复 ·{' '}
-                <span style={{ color: days <= 7 ? tk.errorText : undefined }}>
-                  剩 {days} 天
-                </span>
+                <span style={{ color: days <= 7 ? tk.errorText : undefined }}>剩 {days} 天</span>
               </div>
             </div>
 
             {/* 展开区:回复列表 */}
             {expanded && (
-              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ marginTop: spacing.md, display: 'flex', flexDirection: 'column', gap: spacing.md }}>
                 {item.replies.length === 0 && (
-                  <div style={{ fontSize: 11.5, color: tk.textTertiary }}>无回复(未结段)</div>
+                  <div style={{ fontSize: fontSize.secondary, color: tk.textTertiary }}>无回复(未结段)</div>
                 )}
                 {item.replies.map((r) => (
                   <div
                     key={r.id}
                     style={{
                       borderTop: `1px solid ${tk.separator}`,
-                      paddingTop: 8,
+                      paddingTop: spacing.md,
                       display: 'flex',
-                      gap: 8,
+                      gap: spacing.md,
                       alignItems: 'flex-start',
                     }}
                   >
                     <div
                       style={{
                         flex: 1,
-                        fontSize: 11.5,
+                        fontSize: fontSize.secondary,
                         lineHeight: 1.55,
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
@@ -206,18 +188,18 @@ export function MemoryListTab({
                     >
                       {r.text}
                     </div>
-                    <Btn tk={tk} variant="primary" onClick={() => void setGolden(item, r.id, r.text)} title="把该问题+此回复设为金标准">
+                    <Btn tk={tk} variant="primary" onClick={() => void setGolden(item, r.id, r.text)} title="将此问题与回复设为金标准">
                       设金
                     </Btn>
                   </div>
                 ))}
                 {/* 删除单条(内联二次确认) */}
-                <div style={{ borderTop: `1px solid ${tk.separator}`, paddingTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{ borderTop: `1px solid ${tk.separator}`, paddingTop: spacing.md, display: 'flex', gap: spacing.sm, alignItems: 'center' }}>
                   {confirmDeleteId === item.id ? (
                     <>
-                      <span style={{ fontSize: 11, color: tk.errorText }}>确认删除该问答及其全部回复?</span>
+                      <span style={{ fontSize: fontSize.caption + 0.5, color: tk.errorText }}>删除该问答及其全部回复?</span>
                       <Btn tk={tk} variant="danger" onClick={() => void deleteQa(item.id)}>
-                        删除
+                        确认
                       </Btn>
                       <Btn tk={tk} variant="ghost" onClick={() => setConfirmDeleteId(null)}>
                         取消
@@ -225,13 +207,13 @@ export function MemoryListTab({
                     </>
                   ) : (
                     <Btn tk={tk} variant="danger" onClick={() => setConfirmDeleteId(item.id)}>
-                      删除此条
+                      删除
                     </Btn>
                   )}
                 </div>
               </div>
             )}
-          </div>
+          </Card>
         )
       })}
     </div>

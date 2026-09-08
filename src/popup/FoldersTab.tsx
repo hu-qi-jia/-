@@ -20,7 +20,16 @@ import type {
 } from '../types/messages'
 import { UNCATEGORIZED_FOLDER_ID } from '../types/memory'
 import { buildFolderTree, type FolderNode } from '../utils/panelLogic'
-import { Btn, Notice, cardStyle, inputStyle, type NoticeMsg } from './ui-bits'
+import {
+  Badge,
+  Btn,
+  Card,
+  EmptyState,
+  Notice,
+  inputStyle,
+  type NoticeMsg,
+} from '../ui/components'
+import { fontSize, fontWeight, spacing } from '../ui/design'
 import {
   FolderIcon,
   FolderOpenIcon,
@@ -29,9 +38,6 @@ import {
   StarIcon,
   XIcon,
 } from '../ui/icons'
-
-const GOLDEN = '#d97706'
-const GOLDEN_BG = 'rgba(245,158,11,0.15)'
 
 const clamp2: React.CSSProperties = {
   display: '-webkit-box',
@@ -136,7 +142,7 @@ export function FoldersTab({
         payload: { id },
       })
       if (resp.payload.success) {
-        setMsg({ ok: true, text: '文件夹已删除,其下金标准移入"未分类"' })
+        setMsg({ ok: true, text: '文件夹已删除,其下金标准已移入「未分类」' })
         await refresh()
       } else {
         setMsg({ ok: false, text: `删除失败:${resp.payload.error ?? '未知错误'}` })
@@ -156,7 +162,7 @@ export function FoldersTab({
         payload: { text: g.answer },
       })
       if (resp.payload.success) {
-        setMsg({ ok: true, text: '已填充到聊天页输入框 · 请手动发送' })
+        setMsg({ ok: true, text: '已填充至输入框,发送由人工完成' })
       } else {
         setMsg({ ok: false, text: resp.payload.error ?? '填充失败' })
       }
@@ -194,7 +200,7 @@ export function FoldersTab({
       }
       setMsg({
         ok: true,
-        text: resp.payload.reembed ? '已保存,正在重新生成问题向量…' : '已保存',
+        text: resp.payload.reembed ? '已保存,正在重新生成问题向量' : '已保存',
       })
       await refresh()
     } catch (err) {
@@ -223,7 +229,7 @@ export function FoldersTab({
         payload: { id },
       })
       if (resp.payload.success) {
-        setMsg({ ok: true, text: '金标准已删除(不影响历史记录)' })
+        setMsg({ ok: true, text: '金标准已删除,历史记录不受影响' })
         await refresh()
       } else {
         setMsg({ ok: false, text: `删除失败:${resp.payload.error ?? '未知错误'}` })
@@ -237,7 +243,7 @@ export function FoldersTab({
   // ─── 渲染 ──────────────────────────────────────────────────────────────────────
 
   if (loading) {
-    return <div style={{ fontSize: 12, color: tk.textMuted }}>读取中…</div>
+    return <div style={{ fontSize: fontSize.secondary, color: tk.textMuted }}>读取中…</div>
   }
 
   const tree = buildFolderTree(folders, goldens)
@@ -251,17 +257,18 @@ export function FoldersTab({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: spacing.sm,
           padding: depth > 0 ? '5px 0 3px 14px' : '6px 0 3px',
         }}
       >
-        {depth > 0 && <span style={{ color: tk.textTertiary, fontSize: 11 }}>└</span>}
+        {depth > 0 && <span style={{ color: tk.textTertiary, fontSize: fontSize.secondary }}>└</span>}
         {renamingId === f.id ? (
           <>
             <input
               value={renameName}
               onChange={(e) => setRenameName(e.target.value)}
               autoFocus
+              className="pddcs-input"
               onKeyDown={(e) => e.key === 'Enter' && void submitRename()}
               style={inputStyle(tk, { flex: 1 })}
             />
@@ -274,12 +281,12 @@ export function FoldersTab({
           </>
         ) : (
           <>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 650 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: spacing.sm, fontSize: fontSize.body, fontWeight: fontWeight.semibold }}>
               {depth > 0 ? <FolderIcon size={14} strokeWidth={2} /> : <FolderOpenIcon size={14} strokeWidth={2} />}
               {f.name}
             </span>
-            <span style={{ fontSize: 10.5, color: tk.textTertiary }}>({count})</span>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+            <span style={{ fontSize: fontSize.caption, color: tk.textTertiary, fontVariantNumeric: 'tabular-nums' }}>({count})</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: spacing.xs }}>
               {depth === 0 && (
                 <Btn tk={tk} variant="ghost" title="在此文件夹下新建子文件夹" onClick={() => { setCreateParent(f.id); setNewName('') }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
@@ -295,7 +302,7 @@ export function FoldersTab({
                   {confirmFolderDelete === f.id ? (
                     <>
                       <Btn tk={tk} variant="danger" onClick={() => void deleteFolder(f.id)}>
-                        确认删
+                        确认
                       </Btn>
                       <Btn tk={tk} variant="ghost" onClick={() => setConfirmFolderDelete(null)}>
                         取消
@@ -318,15 +325,14 @@ export function FoldersTab({
   const goldenCard = (g: PanelGolden, indent: boolean) => {
     const editing = editingId === g.id
     return (
-      <div
+      <Card
         key={g.id}
-        style={cardStyle(tk, {
-          margin: indent ? '0 0 8px 14px' : '0 0 8px',
-          padding: '9px 11px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-        })}
+        tk={tk}
+        style={{
+          margin: indent ? `0 0 ${spacing.md - 2}px 14px` : `0 0 ${spacing.md - 2}px`,
+          padding: `${spacing.md + 1}px ${spacing.xl - 1}px`,
+          gap: spacing.sm + 1,
+        }}
       >
         {editing ? (
           <>
@@ -335,6 +341,7 @@ export function FoldersTab({
               onChange={(e) => setDraftQ(e.target.value)}
               rows={2}
               placeholder="标准问题"
+              className="pddcs-input"
               style={inputStyle(tk, { resize: 'vertical' })}
             />
             <textarea
@@ -342,11 +349,12 @@ export function FoldersTab({
               onChange={(e) => setDraftA(e.target.value)}
               rows={4}
               placeholder="标准回复"
+              className="pddcs-input"
               style={inputStyle(tk, { resize: 'vertical' })}
             />
-            <div style={{ display: 'flex', gap: 6 }}>
-              <Btn tk={tk} variant="primary" onClick={() => void submitEdit()}>
-                保存(自动重嵌)
+            <div style={{ display: 'flex', gap: spacing.sm }}>
+              <Btn tk={tk} variant="primary" onClick={() => void submitEdit()} title="保存后自动重新生成问题向量">
+                保存
               </Btn>
               <Btn tk={tk} variant="ghost" onClick={() => setEditingId(null)}>
                 取消
@@ -355,28 +363,15 @@ export function FoldersTab({
           </>
         ) : (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 3,
-                  backgroundColor: GOLDEN_BG,
-                  color: GOLDEN,
-                  borderRadius: 9999,
-                  fontSize: 10,
-                  padding: '2px 8px',
-                  fontWeight: 600,
-                }}
-              >
-                <StarIcon size={10} strokeWidth={2.2} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
+              <Badge tk={tk} tone="golden" icon={<StarIcon size={10} strokeWidth={2.2} />}>
                 金标准
-              </span>
+              </Badge>
               {g.hasEmbedding === 0 && (
-                <span style={{ fontSize: 10, color: tk.textMuted }}>向量生成中…</span>
+                <span style={{ fontSize: fontSize.caption, color: tk.textMuted }}>向量生成中</span>
               )}
               {g.hasEmbedding === -1 && (
-                <span style={{ fontSize: 10, color: tk.errorText }}>嵌入失败(重启扩展重试)</span>
+                <span style={{ fontSize: fontSize.caption, color: tk.errorText }}>嵌入失败,重启扩展后重试</span>
               )}
               {/* 迁移文件夹 */}
               <select
@@ -386,10 +381,10 @@ export function FoldersTab({
                 style={{
                   marginLeft: 'auto',
                   maxWidth: 110,
-                  fontSize: 10.5,
+                  fontSize: fontSize.caption,
                   border: `1px solid ${tk.border}`,
-                  borderRadius: 6,
-                  backgroundColor: tk.bgCard,
+                  borderRadius: 8,
+                  backgroundColor: tk.bgSecondary,
                   color: tk.text,
                   padding: '1px 3px',
                 }}
@@ -397,14 +392,14 @@ export function FoldersTab({
                 {flatFolderOptions(tree)}
               </select>
             </div>
-            <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.45, ...clamp2 }}>
+            <div style={{ fontSize: fontSize.body, fontWeight: fontWeight.semibold, lineHeight: 1.45, ...clamp2 }}>
               {g.question}
             </div>
-            <div style={{ fontSize: 11.5, color: tk.textMuted, lineHeight: 1.5, whiteSpace: 'pre-wrap', ...clamp2 }}>
+            <div style={{ fontSize: fontSize.secondary, color: tk.textMuted, lineHeight: 1.5, whiteSpace: 'pre-wrap', ...clamp2 }}>
               {g.answer}
             </div>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              <Btn tk={tk} variant="primary" onClick={() => void fillGolden(g)} title="填充到聊天页输入框(不自动发送)">
+            <div style={{ display: 'flex', gap: spacing.xs, flexWrap: 'wrap' }}>
+              <Btn tk={tk} variant="primary" onClick={() => void fillGolden(g)} title="填充到聊天页输入框,发送由人工完成">
                 填充
               </Btn>
               <Btn tk={tk} onClick={() => void copyGolden(g)}>
@@ -416,7 +411,7 @@ export function FoldersTab({
               {confirmGoldenDelete === g.id ? (
                 <>
                   <Btn tk={tk} variant="danger" onClick={() => void deleteGolden(g.id)}>
-                    确认删
+                    确认
                   </Btn>
                   <Btn tk={tk} variant="ghost" onClick={() => setConfirmGoldenDelete(null)}>
                     取消
@@ -430,7 +425,7 @@ export function FoldersTab({
             </div>
           </>
         )}
-      </div>
+      </Card>
     )
   }
 
@@ -438,12 +433,13 @@ export function FoldersTab({
     <div key={node.folder.id}>
       {folderHeader(node, depth)}
       {createParent === node.folder.id && (
-        <div style={{ display: 'flex', gap: 6, padding: depth > 0 ? '0 0 4px 28px' : '0 0 4px 14px' }}>
+        <div style={{ display: 'flex', gap: spacing.sm, padding: depth > 0 ? '0 0 4px 28px' : '0 0 4px 14px' }}>
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="子文件夹名称"
             autoFocus
+            className="pddcs-input"
             style={inputStyle(tk, { flex: 1 })}
           />
           <Btn tk={tk} variant="primary" onClick={() => void submitCreate()}>
@@ -460,15 +456,16 @@ export function FoldersTab({
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
       {/* 根层新建 */}
       {createParent === 'root' ? (
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: spacing.sm }}>
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="根文件夹名称"
             autoFocus
+            className="pddcs-input"
             style={inputStyle(tk, { flex: 1 })}
           />
           <Btn tk={tk} variant="primary" onClick={() => void submitCreate()}>
@@ -488,16 +485,11 @@ export function FoldersTab({
 
       <Notice tk={tk} msg={msg} />
 
-      {tree.length === 0 && (
-        <div style={{ fontSize: 12, color: tk.textTertiary, textAlign: 'center', padding: 12 }}>
-          暂无文件夹
-        </div>
-      )}
+      {tree.length === 0 && <EmptyState tk={tk}>暂无文件夹</EmptyState>}
       {tree.map((n) => renderNode(n, 0))}
 
-      <div style={{ fontSize: 10.5, color: tk.textTertiary, lineHeight: 1.6, marginTop: 2 }}>
-        在聊天页点候选弹窗中的「设金」,或记忆列表里的「设金」,即可沉淀金标准;
-        弹窗命中时金标准置顶并放宽阈值。
+      <div style={{ fontSize: fontSize.caption, color: tk.textTertiary, lineHeight: 1.6 }}>
+        在聊天页候选弹窗或记忆列表中可将优质回复沉淀为金标准;检索命中时金标准置顶并放宽阈值。
       </div>
     </div>
   )

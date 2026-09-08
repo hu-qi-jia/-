@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { ThemeProvider, useTheme } from '../ui/theme-context'
 import { getThemeTokens, type ThemeTokens } from '../ui/theme'
+import { fontSize, fontWeight, radius, size, spacing } from '../ui/design'
 import {
   AiSparkIcon,
   BookOpenIcon,
@@ -25,12 +26,13 @@ import { FoldersTab } from './FoldersTab'
 import { KnowledgeTab } from './KnowledgeTab'
 import { SettingsTab } from './SettingsTab'
 
-const RAIL_W = 52
-const POPUP_WIDTH = 400
-const POPUP_MAX_HEIGHT = 560
+const RAIL_W = size.railWidth
+const POPUP_WIDTH = size.popupWidth
+/** 固定高度(内容区自行滚动),保证 popup 外形稳定 */
+const POPUP_HEIGHT = size.popupHeight
 
 const RESET_CSS = `
-html, body { margin: 0; padding: 0; }
+html, body { margin: 0; padding: 0; background: transparent !important; }
 * { box-sizing: border-box; }
 
 /* ── 胶囊按钮(ChatGPT 操作按钮)────────────────────────── */
@@ -113,8 +115,11 @@ function App() {
     <div
       style={{
         width: POPUP_WIDTH,
-        maxHeight: POPUP_MAX_HEIGHT,
+        height: POPUP_HEIGHT,
         display: 'flex',
+        overflow: 'hidden',
+        borderRadius: radius.xl,
+        boxShadow: tk.shadow,
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Microsoft YaHei", sans-serif',
         backgroundColor: tk.bg,
@@ -129,8 +134,8 @@ function App() {
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          padding: '10px 8px',
-          gap: 4,
+          padding: `${spacing.lg + 2}px ${spacing.md}px`,
+          gap: spacing.xs,
           backgroundColor: tk.bgSecondary,
           borderRight: `1px solid ${tk.borderLight}`,
         }}
@@ -138,15 +143,15 @@ function App() {
         {/* 品牌标 */}
         <div
           style={{
-            width: 32,
-            height: 32,
-            borderRadius: 10,
+            width: size.railBtn - 4,
+            height: size.railBtn - 4,
+            borderRadius: radius.lg - 4,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: tk.accent,
             color: '#ffffff',
-            marginBottom: 10,
+            marginBottom: spacing.lg,
           }}
           title="拼多多客服快捷回复"
         >
@@ -182,11 +187,11 @@ function App() {
       {/* ── 右侧内容区 ───────────────────────────────────────── */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         {/* 头部:页签名 + 数据概览 */}
-        <header style={{ padding: '14px 16px 10px' }}>
-          <div style={{ fontSize: 15, fontWeight: 650, letterSpacing: '-0.01em' }}>
+        <header style={{ padding: `${spacing.xxl - 2}px ${spacing.xxl}px ${spacing.lg}px` }}>
+          <div style={{ fontSize: fontSize.heading, fontWeight: fontWeight.heading, letterSpacing: '-0.01em' }}>
             {TABS.find((t) => t.id === tab)?.label}
           </div>
-          <div style={{ fontSize: 11, color: tk.textTertiary, marginTop: 2 }}>
+          <div style={{ fontSize: fontSize.caption, color: tk.textTertiary, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
             {stats
               ? `问答 ${stats.qaCount} · 回复 ${stats.replyCount} · 金标准 ${stats.goldenCount} · 知识 ${stats.knowledgeCount}`
               : '读取中…'}
@@ -194,7 +199,7 @@ function App() {
         </header>
 
         {/* 页签内容(各自滚动) */}
-        <div className="pddcs-scroll" style={{ overflowY: 'auto', padding: '2px 16px 16px', flex: 1 }}>
+        <div className="pddcs-scroll" style={{ overflowY: 'auto', padding: `2px ${spacing.xxl}px ${spacing.xxl}px`, flex: 1 }}>
           {tab === 'memory' && (
             <MemoryListTab tk={tk} retentionDays={stats?.settings.retentionDays ?? 90} onDataChanged={refreshStats} />
           )}

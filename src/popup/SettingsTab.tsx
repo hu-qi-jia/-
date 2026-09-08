@@ -2,6 +2,7 @@
  * 设置页(P3,设计文档 §7/§8):直接填充开关、金标准优先、相似度/金标准阈值、
  * 保留期天数;导入/导出 v2(默认金标准+文件夹+设置,记忆可选);
  * 关于与合规说明。P0 自检卡按设计移除。
+ * 复用组件:Card / Toggle / Slider / Btn / Notice(见 ui/components.tsx)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { ThemeTokens } from '../ui/theme'
@@ -13,125 +14,9 @@ import type {
   UpdateSettingsResponse,
 } from '../types/messages'
 import type { PddSettings } from '../types/memory'
-import { Btn, Notice, cardStyle, type NoticeMsg } from './ui-bits'
+import { Btn, Card, Notice, Slider, Toggle, type NoticeMsg } from '../ui/components'
+import { fontSize, spacing } from '../ui/design'
 import { DownloadIcon, UploadIcon } from '../ui/icons'
-
-function Card({ tk, title, children }: { tk: ThemeTokens; title: string; children: React.ReactNode }) {
-  return (
-    <div
-      style={cardStyle(tk, {
-        padding: '12px 14px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-      })}
-    >
-      <div style={{ fontSize: 11.5, fontWeight: 600, color: tk.textMuted }}>{title}</div>
-      {children}
-    </div>
-  )
-}
-
-/** ChatGPT 式拨杆开关 */
-function Toggle({
-  label,
-  desc,
-  checked,
-  onChange,
-  tk,
-}: {
-  label: string
-  desc: string
-  checked: boolean
-  onChange: (v: boolean) => void
-  tk: ThemeTokens
-}) {
-  return (
-    <label
-      style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}
-      onClick={(e) => {
-        e.preventDefault()
-        onChange(!checked)
-      }}
-    >
-      <span
-        role="switch"
-        aria-checked={checked}
-        title={label}
-        style={{
-          width: 32,
-          height: 19,
-          flexShrink: 0,
-          borderRadius: 9999,
-          marginTop: 2,
-          position: 'relative',
-          transition: 'background-color .15s ease',
-          backgroundColor: checked ? tk.accent : tk.inputBorder,
-        }}
-      >
-        <span
-          style={{
-            position: 'absolute',
-            top: 2,
-            left: checked ? 15 : 2,
-            width: 15,
-            height: 15,
-            borderRadius: '50%',
-            backgroundColor: '#ffffff',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-            transition: 'left .15s ease',
-          }}
-        />
-      </span>
-      <span>
-        <span style={{ fontSize: 12.5, fontWeight: 500 }}>{label}</span>
-        <span style={{ display: 'block', fontSize: 10.5, color: tk.textMuted, lineHeight: 1.55, marginTop: 1 }}>
-          {desc}
-        </span>
-      </span>
-    </label>
-  )
-}
-
-function Slider({
-  tk,
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-  format,
-}: {
-  tk: ThemeTokens
-  label: string
-  value: number
-  min: number
-  max: number
-  step: number
-  onChange: (v: number) => void
-  format: (v: number) => string
-}) {
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-        <span>{label}</span>
-        <span style={{ color: tk.textMuted, fontFamily: 'ui-monospace, Consolas, monospace' }}>
-          {format(value)}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={{ width: '100%', accentColor: tk.accent, cursor: 'pointer' }}
-      />
-    </div>
-  )
-}
 
 export function SettingsTab({
   tk,
@@ -256,29 +141,29 @@ export function SettingsTab({
 
   if (!draft) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ fontSize: 12, color: tk.textMuted }}>读取中…</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.md }}>
+        <div style={{ fontSize: fontSize.secondary, color: tk.textMuted }}>读取中…</div>
         <Notice tk={tk} msg={msg} />
       </div>
     )
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
       <Notice tk={tk} msg={msg} />
 
       <Card tk={tk} title="检索与填充(改动即时生效)">
         <Toggle
           tk={tk}
           label="直接填充"
-          desc="开启后点击 AI 按钮不弹窗,直接填充最高分候选(默认关)"
+          desc="开启后点击「AI回复」直接填充最高分候选,不再弹窗"
           checked={draft.directFillEnabled}
           onChange={(v) => void persist({ ...draft, directFillEnabled: v })}
         />
         <Toggle
           tk={tk}
           label="金标准优先"
-          desc="候选排序时金标准置顶(推荐保持开启)"
+          desc="候选排序时金标准置顶(建议保持开启)"
           checked={draft.goldenPriorityEnabled}
           onChange={(v) => void persist({ ...draft, goldenPriorityEnabled: v })}
         />
@@ -314,15 +199,15 @@ export function SettingsTab({
         />
       </Card>
 
-      <Card tk={tk} title="导入 / 导出(v2)">
+      <Card tk={tk} title="导入与导出">
         <Toggle
           tk={tk}
           label="导出包含记忆数据"
-          desc="问答记录+回复一并导出(向量不导出,导入后自动重嵌);默认只导金标准+文件夹+设置"
+          desc="问答记录与回复一并导出(向量不导出,导入后自动重嵌);默认仅导出金标准、文件夹与设置"
           checked={includeMemory}
           onChange={setIncludeMemory}
         />
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: spacing.sm }}>
           <Btn tk={tk} variant="primary" disabled={busy} onClick={() => void exportJson()}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <DownloadIcon size={12} strokeWidth={2} />导出 JSON
@@ -344,15 +229,15 @@ export function SettingsTab({
             }}
           />
         </div>
-        <div style={{ fontSize: 10.5, color: tk.textTertiary, lineHeight: 1.6 }}>
-          导入按内容幂等:已存在的金标准/问答跳过并计数,不覆盖本地编辑;版本不符将拒绝。
+        <div style={{ fontSize: fontSize.caption, color: tk.textTertiary, lineHeight: 1.6 }}>
+          导入按内容幂等:已存在的金标准与问答自动跳过并计数,不覆盖本地编辑;版本不符将拒绝导入。
         </div>
       </Card>
 
       <Card tk={tk} title="关于">
-        <div style={{ fontSize: 11, color: tk.textMuted, lineHeight: 1.7 }}>
-          本工具只读聊天页 DOM、只填充官方输入框,发送永远由人工点击;
-          全部数据仅存本机 IndexedDB,绝不上传;模型文件仅从 hf-mirror.com 镜像下载。
+        <div style={{ fontSize: fontSize.secondary - 0.5, color: tk.textMuted, lineHeight: 1.7 }}>
+          本工具仅读取聊天页内容并填充官方输入框,发送始终由人工完成;
+          全部数据仅存本机 IndexedDB,不上传任何服务器;模型文件仅从 hf-mirror.com 镜像下载。
           请勿用于自动群发等违反平台规则的场景。
         </div>
       </Card>
