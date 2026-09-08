@@ -2,6 +2,7 @@
 // P0 只保留底座所需(自检/统计);P1 捕获、P2 检索、P3 金标准 CRUD 消息随阶段扩展。
 
 import type { PddRole, PddSettings } from './memory'
+import type { ExportEnvelope } from '../background/transferPlan'
 
 // ─── PING_EMBED:嵌入链路自检(popup → SW)───────────────────────────────────────
 // SW 经 offscreen 嵌入一段样本文本,返回模型名与向量维度 —— P0 验收用。
@@ -152,6 +153,194 @@ export interface AddGoldenResponse {
   payload: { id?: string; exists?: boolean; error?: string }
 }
 
+// ─── P3 面板:记忆列表(popup → SW)────────────────────────────────────────────
+
+export interface MemoryReplyItem {
+  id: string
+  text: string
+  ts: number
+}
+
+export interface MemoryListItem {
+  id: string
+  question: string
+  questionTs: number
+  replyCount: number
+  replies: MemoryReplyItem[]
+}
+
+export interface GetMemoryListRequest {
+  type: 'GET_MEMORY_LIST'
+}
+
+export interface GetMemoryListResponse {
+  type: 'GET_MEMORY_LIST_RESPONSE'
+  payload: { items: MemoryListItem[]; error?: string }
+}
+
+export interface DeleteQaRequest {
+  type: 'DELETE_QA'
+  payload: { id: string }
+}
+
+export interface DeleteQaResponse {
+  type: 'DELETE_QA_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
+// ─── P3 面板:金标准 / 文件夹(popup → SW)────────────────────────────────────
+// 面板线类型:剥离向量字段,减小消息体积(向量只活在 SW/IndexedDB 内)。
+
+export interface PanelFolder {
+  id: string
+  parentId: string | null
+  name: string
+  position: number
+}
+
+export interface PanelGolden {
+  id: string
+  folderId: string | null
+  question: string
+  answer: string
+  hasEmbedding: number
+  updatedAt: number
+}
+
+export interface GetPanelDataRequest {
+  type: 'GET_PANEL_DATA'
+}
+
+export interface GetPanelDataResponse {
+  type: 'GET_PANEL_DATA_RESPONSE'
+  payload: { folders: PanelFolder[]; goldens: PanelGolden[]; error?: string }
+}
+
+/** 编辑保存即重嵌(问题实质变更时);folderId 兼作"迁移文件夹" */
+export interface UpdateGoldenRequest {
+  type: 'UPDATE_GOLDEN'
+  payload: {
+    id: string
+    question?: string
+    answer?: string
+    folderId?: string | null
+  }
+}
+
+export interface UpdateGoldenResponse {
+  type: 'UPDATE_GOLDEN_RESPONSE'
+  payload: { id?: string; reembed?: boolean; error?: string }
+}
+
+export interface DeleteGoldenRequest {
+  type: 'DELETE_GOLDEN'
+  payload: { id: string }
+}
+
+export interface DeleteGoldenResponse {
+  type: 'DELETE_GOLDEN_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
+export interface CreateFolderRequest {
+  type: 'CREATE_FOLDER'
+  payload: { name: string; parentId: string | null }
+}
+
+export interface CreateFolderResponse {
+  type: 'CREATE_FOLDER_RESPONSE'
+  payload: { id?: string; error?: string }
+}
+
+export interface RenameFolderRequest {
+  type: 'RENAME_FOLDER'
+  payload: { id: string; name: string }
+}
+
+export interface RenameFolderResponse {
+  type: 'RENAME_FOLDER_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
+export interface DeleteFolderRequest {
+  type: 'DELETE_FOLDER'
+  payload: { id: string }
+}
+
+export interface DeleteFolderResponse {
+  type: 'DELETE_FOLDER_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
+// ─── P3 设置(popup → SW)───────────────────────────────────────────────────────
+
+export interface UpdateSettingsRequest {
+  type: 'UPDATE_SETTINGS'
+  payload: Partial<PddSettings>
+}
+
+export interface UpdateSettingsResponse {
+  type: 'UPDATE_SETTINGS_RESPONSE'
+  payload: { settings?: PddSettings; error?: string }
+}
+
+// ─── P3 导入导出 v2(popup → SW)───────────────────────────────────────────────
+// 信封结构与幂等合并计划见 background/transferPlan.ts。
+
+export interface ExportDataRequest {
+  type: 'EXPORT_DATA'
+  payload: { includeMemory: boolean }
+}
+
+export interface ExportDataResponse {
+  type: 'EXPORT_DATA_RESPONSE'
+  payload: { envelope?: ExportEnvelope; error?: string }
+}
+
+export interface ImportDataResponse {
+  type: 'IMPORT_DATA_RESPONSE'
+  payload: {
+    addedGoldens?: number
+    skippedGoldens?: number
+    addedFolders?: number
+    skippedFolders?: number
+    addedQa?: number
+    skippedQa?: number
+    addedReplies?: number
+    skippedReplies?: number
+    error?: string
+  }
+}
+
+export interface ImportDataRequest {
+  type: 'IMPORT_DATA'
+  payload: { envelope: unknown }
+}
+
+// ─── P3 填充当前输入框(popup → SW → content)────────────────────────────────
+// 金标准卡"填充"按钮:SW 找到聊天页 tab 经 tabs.sendMessage 转发到 content。
+
+export interface FillInputRequest {
+  type: 'FILL_INPUT'
+  payload: { text: string }
+}
+
+export interface FillInputResponse {
+  type: 'FILL_INPUT_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
+/** SW → content(不经 ExtensionMessage 并集,走 tabs.sendMessage) */
+export interface ContentFillMessage {
+  type: 'PDD_FILL_INPUT'
+  payload: { text: string }
+}
+
+export interface ContentFillResponse {
+  type: 'PDD_FILL_INPUT_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
 // ─── 并集 ──────────────────────────────────────────────────────────────────────
 
 export type ExtensionMessage =
@@ -159,9 +348,37 @@ export type ExtensionMessage =
   | GetStatsRequest
   | SelfTestWriteRequest
   | PddIngestRequest
+  | GetSuggestionsRequest
+  | AddGoldenRequest
+  | GetMemoryListRequest
+  | DeleteQaRequest
+  | GetPanelDataRequest
+  | UpdateGoldenRequest
+  | DeleteGoldenRequest
+  | CreateFolderRequest
+  | RenameFolderRequest
+  | DeleteFolderRequest
+  | UpdateSettingsRequest
+  | ExportDataRequest
+  | ImportDataRequest
+  | FillInputRequest
 
 export type ExtensionMessageResponse =
   | PingEmbedResponse
   | GetStatsResponse
   | SelfTestWriteResponse
   | PddIngestResponse
+  | GetSuggestionsResponse
+  | AddGoldenResponse
+  | GetMemoryListResponse
+  | DeleteQaResponse
+  | GetPanelDataResponse
+  | UpdateGoldenResponse
+  | DeleteGoldenResponse
+  | CreateFolderResponse
+  | RenameFolderResponse
+  | DeleteFolderResponse
+  | UpdateSettingsResponse
+  | ExportDataResponse
+  | ImportDataResponse
+  | FillInputResponse

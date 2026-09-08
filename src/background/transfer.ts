@@ -1,0 +1,137 @@
+/**
+ * 导入导出编排(P3,设计文档 §8):信封组装 / 幂等恢复 / 排队重嵌。
+ * 幂等合并的纯计划逻辑见 transferPlan.ts(单测覆盖);本文件只做 DB 读写与编队。
+ */
+import { db } from "./db";
+import { queueEmbedding } from "./offscreen";
+import { loadSettings, saveSettings } from "./settings";
+import {
+  EXPORT_VERSION,
+  buildExportEnvelope,
+  planFolderImports,
+  planGoldenImports,
+  planMemoryImports,
+  type ExportEnvelope,
+} from "./transferPlan";
+import type { ExportDataRequest, ImportDataRequest } from "../types/messages";
+
+export async function exportData(
+  message: ExportDataRequest,
+): Promise<{ envelope?: ExportEnvelope; error?: string }> {
+  try {
+    const includeMemory = !!message.payload?.includeMemory;
+    const [goldens, folders, settings, qaRecords, replies] = await Promise.all([
+      db.goldens.toArray(),
+      db.listFolders(),
+      loadSettings(),
+      includeMemory ? db.qaRecords.toArray() : Promise.resolve([]),
+      includeMemory ? db.replies.toArray() : Promise.resolve([]),
+    ]);
+    return {
+      envelope: buildExportEnvelope({
+        goldens,
+        folders,
+        settings,
+        qaRecords,
+        replies,
+        includeMemory,
+        exportedAt: Date.now(),
+      }),
+    };
+  } catch (err) {
+    return { error: String(err) };
+  }
+}
+
+export interface ImportOutcome {
+  addedGoldens?: number;
+  skippedGoldens?: number;
+  addedFolders?: number;
+  skippedFolders?: number;
+  addedQa?: number;
+  skippedQa?: number;
+  addedReplies?: number;
+  skippedReplies?: number;
+  error?: string;
+}
+
+const asArray = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+
+export async function importData(message: ImportDataRequest): Promise<ImportOutcome> {
+  const raw = message.payload?.envelope;
+  if (!raw || typeof raw !== "object") return { error: "导入文件格式无效" };
+  const env = raw as ExportEnvelope;
+  if (env.version !== EXPORT_VERSION) {
+    return { error: `不支持的导出版本:${String(env.version ?? "未知")},需要 ${EXPORT_VERSION}` };
+  }
+
+  try {
+    // 1) 文件夹(金标准的挂载目标先就位)
+    const existingFolderIds = new Set((await db.listFolders()).map((f) => f.id));
+    const folderPlan = planFolderImports(
+      asArray(env.folders),
+      existingFolderIds,
+    );
+    if (folderPlan.toAdd.length > 0) await db.folders.bulkAdd(folderPlan.toAdd);
+
+    // 2) 金标准(hash 幂等;悬空 folderId 归"未分类")
+    const existingHashes = new Set(
+      (await db.goldens.toArray()).map((g) => g.questionHash),
+    );
+    const goldenPlan = planGoldenImports(asArray(env.goldens), existingHashes);
+    const knownFolderIds = new Set([
+      ...existingFolderIds,
+      ...folderPlan.toAdd.map((f) => f.id),
+    ]);
+    for (const g of goldenPlan.toAdd) {
+      if (g.folderId !== null && !knownFolderIds.has(g.folderId)) g.folderId = null;
+    }
+    if (goldenPlan.toAdd.length > 0) await db.goldens.bulkAdd(goldenPlan.toAdd);
+    for (const g of goldenPlan.toAdd) queueEmbedding("golden", g.id, g.question);
+
+    // 3) 记忆搬库(可选部分;问答重嵌排队)
+    let addedQa = 0;
+    let skippedQa = 0;
+    let addedReplies = 0;
+    let skippedReplies = 0;
+    if (Array.isArray(env.qaRecords) || Array.isArray(env.replies)) {
+      const [existingQaIds, existingReplyIds] = await Promise.all([
+        db.qaRecords.toCollection().primaryKeys(),
+        db.replies.toCollection().primaryKeys(),
+      ]);
+      const memPlan = planMemoryImports(
+        asArray(env.qaRecords),
+        asArray(env.replies),
+        new Set(existingQaIds as string[]),
+        new Set(existingReplyIds as string[]),
+      );
+      if (memPlan.toAddQa.length > 0) await db.qaRecords.bulkAdd(memPlan.toAddQa);
+      if (memPlan.toAddReplies.length > 0) {
+        await db.replies.bulkAdd(memPlan.toAddReplies);
+      }
+      for (const q of memPlan.toAddQa) queueEmbedding("qa", q.id, q.question);
+      addedQa = memPlan.toAddQa.length;
+      skippedQa = memPlan.skippedQa;
+      addedReplies = memPlan.toAddReplies.length;
+      skippedReplies = memPlan.skippedReplies;
+    }
+
+    // 4) 设置合并(clamp 与默认值兜底由 saveSettings 保证)
+    if (env.settings && typeof env.settings === "object") {
+      await saveSettings(env.settings);
+    }
+
+    return {
+      addedGoldens: goldenPlan.toAdd.length,
+      skippedGoldens: goldenPlan.skipped,
+      addedFolders: folderPlan.toAdd.length,
+      skippedFolders: folderPlan.skipped,
+      addedQa,
+      skippedQa,
+      addedReplies,
+      skippedReplies,
+    };
+  } catch (err) {
+    return { error: String(err) };
+  }
+}

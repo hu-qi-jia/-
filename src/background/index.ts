@@ -36,9 +36,47 @@ import type {
   SelfTestWriteResponse,
   AddGoldenRequest,
   AddGoldenResponse,
+  GetMemoryListRequest,
+  GetMemoryListResponse,
+  DeleteQaRequest,
+  DeleteQaResponse,
+  GetPanelDataRequest,
+  GetPanelDataResponse,
+  UpdateGoldenRequest,
+  UpdateGoldenResponse,
+  DeleteGoldenRequest,
+  DeleteGoldenResponse,
+  CreateFolderRequest,
+  CreateFolderResponse,
+  RenameFolderRequest,
+  RenameFolderResponse,
+  DeleteFolderRequest,
+  DeleteFolderResponse,
+  UpdateSettingsRequest,
+  UpdateSettingsResponse,
+  ExportDataRequest,
+  ExportDataResponse,
+  ImportDataRequest,
+  ImportDataResponse,
+  FillInputRequest,
+  FillInputResponse,
 } from "../types/messages";
 import { searchSuggestions } from "./search";
-import { addGoldenFromSuggestion } from "./goldens";
+import {
+  addGoldenFromSuggestion,
+  deleteGolden,
+  updateGoldenWithReembed,
+} from "./goldens";
+import {
+  createFolder,
+  deleteFolder,
+  deleteQa,
+  getMemoryList,
+  getPanelData,
+  renameFolder,
+} from "./panel";
+import { exportData, importData } from "./transfer";
+import { saveSettings } from "./settings";
 
 const LEGACY_DB_NAME = "AIMemoryDB";
 const TTL_ALARM_NAME = "pddcs-daily-ttl";
@@ -139,6 +177,36 @@ async function handleSelfTestWrite(
   }
 }
 
+/** 金标准卡"填充":转发文本到聊天页 content(只填官方输入框,绝不发送) */
+async function handleFillInput(
+  message: FillInputRequest,
+): Promise<FillInputResponse> {
+  const fail = (error: string): FillInputResponse => ({
+    type: "FILL_INPUT_RESPONSE",
+    payload: { success: false, error },
+  });
+  try {
+    const text = String(message.payload?.text ?? "");
+    if (!text) return fail("填充内容为空");
+    const tabs = await chrome.tabs.query({
+      url: "https://mms.pinduoduo.com/chat-merchant/*",
+    });
+    if (tabs.length === 0) return fail("未找到打开的聊天页");
+    const tab = tabs.find((t) => t.active) ?? tabs[0];
+    if (tab.id === undefined) return fail("聊天页不可达");
+    const resp = (await chrome.tabs.sendMessage(tab.id, {
+      type: "PDD_FILL_INPUT",
+      payload: { text },
+    })) as { payload?: { success?: boolean; error?: string } } | undefined;
+    if (!resp?.payload?.success) {
+      return fail(resp?.payload?.error ?? "页面未就绪,请刷新聊天页后重试");
+    }
+    return { type: "FILL_INPUT_RESPONSE", payload: { success: true } };
+  } catch (err) {
+    return fail(String(err));
+  }
+}
+
 // ─── 消息路由 ───────────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -233,6 +301,193 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             type: "ADD_GOLDEN_RESPONSE",
             payload: { error: String(err) },
           }),
+        );
+      return true;
+
+    case "GET_MEMORY_LIST":
+      getMemoryList(message as GetMemoryListRequest)
+        .then((out) =>
+          sendResponse({
+            type: "GET_MEMORY_LIST_RESPONSE",
+            payload: out,
+          } as GetMemoryListResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "GET_MEMORY_LIST_RESPONSE",
+            payload: { items: [], error: String(err) },
+          }),
+        );
+      return true;
+
+    case "DELETE_QA":
+      deleteQa(message as DeleteQaRequest)
+        .then((out) =>
+          sendResponse({ type: "DELETE_QA_RESPONSE", payload: out } as DeleteQaResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "DELETE_QA_RESPONSE",
+            payload: { success: false, error: String(err) },
+          }),
+        );
+      return true;
+
+    case "GET_PANEL_DATA":
+      getPanelData(message as GetPanelDataRequest)
+        .then((out) =>
+          sendResponse({
+            type: "GET_PANEL_DATA_RESPONSE",
+            payload: out,
+          } as GetPanelDataResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "GET_PANEL_DATA_RESPONSE",
+            payload: { folders: [], goldens: [], error: String(err) },
+          }),
+        );
+      return true;
+
+    case "UPDATE_GOLDEN":
+      updateGoldenWithReembed((message as UpdateGoldenRequest).payload)
+        .then((out) =>
+          sendResponse({
+            type: "UPDATE_GOLDEN_RESPONSE",
+            payload: out,
+          } as UpdateGoldenResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "UPDATE_GOLDEN_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "DELETE_GOLDEN":
+      deleteGolden((message as DeleteGoldenRequest).payload.id)
+        .then(() =>
+          sendResponse({
+            type: "DELETE_GOLDEN_RESPONSE",
+            payload: { success: true },
+          } as DeleteGoldenResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "DELETE_GOLDEN_RESPONSE",
+            payload: { success: false, error: String(err) },
+          }),
+        );
+      return true;
+
+    case "CREATE_FOLDER":
+      createFolder(message as CreateFolderRequest)
+        .then((out) =>
+          sendResponse({
+            type: "CREATE_FOLDER_RESPONSE",
+            payload: out,
+          } as CreateFolderResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "CREATE_FOLDER_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "RENAME_FOLDER":
+      renameFolder(message as RenameFolderRequest)
+        .then((out) =>
+          sendResponse({
+            type: "RENAME_FOLDER_RESPONSE",
+            payload: out,
+          } as RenameFolderResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "RENAME_FOLDER_RESPONSE",
+            payload: { success: false, error: String(err) },
+          }),
+        );
+      return true;
+
+    case "DELETE_FOLDER":
+      deleteFolder(message as DeleteFolderRequest)
+        .then((out) =>
+          sendResponse({
+            type: "DELETE_FOLDER_RESPONSE",
+            payload: out,
+          } as DeleteFolderResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "DELETE_FOLDER_RESPONSE",
+            payload: { success: false, error: String(err) },
+          }),
+        );
+      return true;
+
+    case "UPDATE_SETTINGS":
+      (async () => {
+        await saveSettings((message as UpdateSettingsRequest).payload ?? {});
+        return await loadSettings();
+      })()
+        .then((settings) =>
+          sendResponse({
+            type: "UPDATE_SETTINGS_RESPONSE",
+            payload: { settings },
+          } as UpdateSettingsResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "UPDATE_SETTINGS_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "EXPORT_DATA":
+      exportData(message as ExportDataRequest)
+        .then((out) =>
+          sendResponse({
+            type: "EXPORT_DATA_RESPONSE",
+            payload: out,
+          } as ExportDataResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "EXPORT_DATA_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "IMPORT_DATA":
+      importData(message as ImportDataRequest)
+        .then((out) =>
+          sendResponse({
+            type: "IMPORT_DATA_RESPONSE",
+            payload: out,
+          } as ImportDataResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "IMPORT_DATA_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "FILL_INPUT":
+      handleFillInput(message as FillInputRequest)
+        .then(sendResponse)
+        .catch((err) =>
+          sendResponse({
+            type: "FILL_INPUT_RESPONSE",
+            payload: { success: false, error: String(err) },
+          } satisfies FillInputResponse),
         );
       return true;
 

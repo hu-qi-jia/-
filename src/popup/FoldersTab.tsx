@@ -1,0 +1,524 @@
+/**
+ * 回复文件夹页(P3,设计文档 §7):两层文件夹树 + 金标准卡片。
+ * 卡片操作:填充当前输入框(经 SW 转发到聊天页)/ 复制 / 编辑(双字段,保存即重嵌)/
+ * 迁移文件夹 / 删除(内联二次确认)。
+ * 文件夹操作:新建(根/子,最多两层)/ 重命名 / 删除(其下金标准移出,不删数据)。
+ */
+import React, { useCallback, useEffect, useState } from 'react'
+import type { ThemeTokens } from '../ui/theme'
+import { sendMessage } from '../utils/message-passing'
+import type {
+  CreateFolderResponse,
+  DeleteFolderResponse,
+  DeleteGoldenResponse,
+  FillInputResponse,
+  GetPanelDataResponse,
+  PanelFolder,
+  PanelGolden,
+  RenameFolderResponse,
+  UpdateGoldenResponse,
+} from '../types/messages'
+import { UNCATEGORIZED_FOLDER_ID } from '../types/memory'
+import { buildFolderTree, type FolderNode } from '../utils/panelLogic'
+import { Btn, Notice, type NoticeMsg } from './ui-bits'
+
+const GOLDEN = '#f59e0b'
+
+const clamp2: React.CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  wordBreak: 'break-word',
+}
+
+export function FoldersTab({
+  tk,
+  onDataChanged,
+}: {
+  tk: ThemeTokens
+  onDataChanged: () => Promise<void> | void
+}) {
+  const [folders, setFolders] = useState<PanelFolder[]>([])
+  const [goldens, setGoldens] = useState<PanelGolden[]>([])
+  const [msg, setMsg] = useState<NoticeMsg>(null)
+  const [loading, setLoading] = useState(true)
+
+  // 内联交互状态(同一时刻至多一个激活)
+  const [createParent, setCreateParent] = useState<string | null>(null) // 'root' | folderId
+  const [newName, setNewName] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [confirmFolderDelete, setConfirmFolderDelete] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftQ, setDraftQ] = useState('')
+  const [draftA, setDraftA] = useState('')
+  const [confirmGoldenDelete, setConfirmGoldenDelete] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const resp = await sendMessage<GetPanelDataResponse>({ type: 'GET_PANEL_DATA' })
+      if (resp.payload.error) {
+        setMsg({ ok: false, text: `读取失败:${resp.payload.error}` })
+      } else {
+        setFolders(resp.payload.folders)
+        setGoldens(resp.payload.goldens)
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `读取失败:${String(err)}` })
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const refresh = async () => {
+    await load()
+    await onDataChanged()
+  }
+
+  // ─── 文件夹操作 ────────────────────────────────────────────────────────────────
+
+  const submitCreate = async () => {
+    if (!createParent) return
+    const parentId = createParent === 'root' ? null : createParent
+    try {
+      const resp = await sendMessage<CreateFolderResponse>({
+        type: 'CREATE_FOLDER',
+        payload: { name: newName, parentId },
+      })
+      if (resp.payload.error) setMsg({ ok: false, text: `新建失败:${resp.payload.error}` })
+      else {
+        setMsg({ ok: true, text: '文件夹已创建' })
+        await refresh()
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `新建失败:${String(err)}` })
+    }
+    setCreateParent(null)
+    setNewName('')
+  }
+
+  const submitRename = async () => {
+    if (!renamingId) return
+    try {
+      const resp = await sendMessage<RenameFolderResponse>({
+        type: 'RENAME_FOLDER',
+        payload: { id: renamingId, name: renameName },
+      })
+      if (resp.payload.success) {
+        await refresh()
+      } else {
+        setMsg({ ok: false, text: `重命名失败:${resp.payload.error ?? '未知错误'}` })
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `重命名失败:${String(err)}` })
+    }
+    setRenamingId(null)
+  }
+
+  const deleteFolder = async (id: string) => {
+    try {
+      const resp = await sendMessage<DeleteFolderResponse>({
+        type: 'DELETE_FOLDER',
+        payload: { id },
+      })
+      if (resp.payload.success) {
+        setMsg({ ok: true, text: '文件夹已删除,其下金标准移入"未分类"' })
+        await refresh()
+      } else {
+        setMsg({ ok: false, text: `删除失败:${resp.payload.error ?? '未知错误'}` })
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `删除失败:${String(err)}` })
+    }
+    setConfirmFolderDelete(null)
+  }
+
+  // ─── 金标准操作 ────────────────────────────────────────────────────────────────
+
+  const fillGolden = async (g: PanelGolden) => {
+    try {
+      const resp = await sendMessage<FillInputResponse>({
+        type: 'FILL_INPUT',
+        payload: { text: g.answer },
+      })
+      if (resp.payload.success) {
+        setMsg({ ok: true, text: '已填充到聊天页输入框 · 请手动发送' })
+      } else {
+        setMsg({ ok: false, text: resp.payload.error ?? '填充失败' })
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `填充失败:${String(err)}` })
+    }
+  }
+
+  const copyGolden = async (g: PanelGolden) => {
+    try {
+      await navigator.clipboard.writeText(g.answer)
+      setMsg({ ok: true, text: '已复制到剪贴板' })
+    } catch {
+      setMsg({ ok: false, text: '复制失败' })
+    }
+  }
+
+  const startEdit = (g: PanelGolden) => {
+    setEditingId(g.id)
+    setDraftQ(g.question)
+    setDraftA(g.answer)
+    setConfirmGoldenDelete(null)
+  }
+
+  const submitEdit = async () => {
+    if (!editingId) return
+    try {
+      const resp = await sendMessage<UpdateGoldenResponse>({
+        type: 'UPDATE_GOLDEN',
+        payload: { id: editingId, question: draftQ, answer: draftA },
+      })
+      if (resp.payload.error) {
+        setMsg({ ok: false, text: `保存失败:${resp.payload.error}` })
+        return
+      }
+      setMsg({
+        ok: true,
+        text: resp.payload.reembed ? '已保存,正在重新生成问题向量…' : '已保存',
+      })
+      await refresh()
+    } catch (err) {
+      setMsg({ ok: false, text: `保存失败:${String(err)}` })
+    }
+    setEditingId(null)
+  }
+
+  const moveGolden = async (goldenId: string, folderId: string) => {
+    try {
+      const resp = await sendMessage<UpdateGoldenResponse>({
+        type: 'UPDATE_GOLDEN',
+        payload: { id: goldenId, folderId: folderId === 'null' ? null : folderId },
+      })
+      if (resp.payload.error) setMsg({ ok: false, text: `移动失败:${resp.payload.error}` })
+      else await refresh()
+    } catch (err) {
+      setMsg({ ok: false, text: `移动失败:${String(err)}` })
+    }
+  }
+
+  const deleteGolden = async (id: string) => {
+    try {
+      const resp = await sendMessage<DeleteGoldenResponse>({
+        type: 'DELETE_GOLDEN',
+        payload: { id },
+      })
+      if (resp.payload.success) {
+        setMsg({ ok: true, text: '金标准已删除(不影响历史记录)' })
+        await refresh()
+      } else {
+        setMsg({ ok: false, text: `删除失败:${resp.payload.error ?? '未知错误'}` })
+      }
+    } catch (err) {
+      setMsg({ ok: false, text: `删除失败:${String(err)}` })
+    }
+    setConfirmGoldenDelete(null)
+  }
+
+  // ─── 渲染 ──────────────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return <div style={{ fontSize: 12, color: tk.textMuted }}>读取中…</div>
+  }
+
+  const tree = buildFolderTree(folders, goldens)
+
+  const folderHeader = (node: FolderNode, depth: number) => {
+    const f = node.folder
+    const isUnc = f.id === UNCATEGORIZED_FOLDER_ID
+    const count = node.goldens.length
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: depth > 0 ? '5px 0 3px 14px' : '6px 0 3px',
+        }}
+      >
+        {depth > 0 && <span style={{ color: tk.textTertiary, fontSize: 11 }}>└</span>}
+        {renamingId === f.id ? (
+          <>
+            <input
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && void submitRename()}
+              style={inputStyle(tk, { flex: 1 })}
+            />
+            <Btn tk={tk} variant="primary" onClick={() => void submitRename()}>
+              保存
+            </Btn>
+            <Btn tk={tk} variant="ghost" onClick={() => setRenamingId(null)}>
+              取消
+            </Btn>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 12.5, fontWeight: 700 }}>
+              {depth === 0 ? '📁' : '📂'} {f.name}
+            </span>
+            <span style={{ fontSize: 10.5, color: tk.textMuted }}>({count})</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              {depth === 0 && (
+                <Btn tk={tk} variant="ghost" title="在此文件夹下新建子文件夹" onClick={() => { setCreateParent(f.id); setNewName('') }}>
+                  +子夹
+                </Btn>
+              )}
+              {!isUnc && (
+                <>
+                  <Btn tk={tk} variant="ghost" title="重命名" onClick={() => { setRenamingId(f.id); setRenameName(f.name) }}>
+                    ✎
+                  </Btn>
+                  {confirmFolderDelete === f.id ? (
+                    <>
+                      <Btn tk={tk} variant="danger" onClick={() => void deleteFolder(f.id)}>
+                        确认删
+                      </Btn>
+                      <Btn tk={tk} variant="ghost" onClick={() => setConfirmFolderDelete(null)}>
+                        取消
+                      </Btn>
+                    </>
+                  ) : (
+                    <Btn tk={tk} variant="ghost" title="删除文件夹(金标准保留)" onClick={() => setConfirmFolderDelete(f.id)}>
+                      ✕
+                    </Btn>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  const goldenCard = (g: PanelGolden, indent: boolean) => {
+    const editing = editingId === g.id
+    return (
+      <div
+        key={g.id}
+        style={{
+          margin: indent ? '0 0 6px 14px' : '0 0 6px',
+          border: `1px solid ${tk.border}`,
+          borderRadius: 9,
+          backgroundColor: tk.bg,
+          padding: '7px 9px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 5,
+        }}
+      >
+        {editing ? (
+          <>
+            <textarea
+              value={draftQ}
+              onChange={(e) => setDraftQ(e.target.value)}
+              rows={2}
+              placeholder="标准问题"
+              style={inputStyle(tk, { resize: 'vertical' })}
+            />
+            <textarea
+              value={draftA}
+              onChange={(e) => setDraftA(e.target.value)}
+              rows={4}
+              placeholder="标准回复"
+              style={inputStyle(tk, { resize: 'vertical' })}
+            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Btn tk={tk} variant="primary" onClick={() => void submitEdit()}>
+                保存(自动重嵌)
+              </Btn>
+              <Btn tk={tk} variant="ghost" onClick={() => setEditingId(null)}>
+                取消
+              </Btn>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span
+                style={{
+                  backgroundColor: GOLDEN,
+                  color: '#fff',
+                  borderRadius: 3,
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  fontWeight: 600,
+                }}
+              >
+                金标准
+              </span>
+              {g.hasEmbedding === 0 && (
+                <span style={{ fontSize: 10, color: tk.textMuted }}>向量生成中…</span>
+              )}
+              {g.hasEmbedding === -1 && (
+                <span style={{ fontSize: 10, color: tk.errorText }}>嵌入失败(重启扩展重试)</span>
+              )}
+              {/* 迁移文件夹 */}
+              <select
+                value={g.folderId ?? UNCATEGORIZED_FOLDER_ID}
+                onChange={(e) => void moveGolden(g.id, e.target.value)}
+                title="迁移到其他文件夹"
+                style={{
+                  marginLeft: 'auto',
+                  maxWidth: 110,
+                  fontSize: 10.5,
+                  border: `1px solid ${tk.border}`,
+                  borderRadius: 6,
+                  backgroundColor: tk.bgCard,
+                  color: tk.text,
+                  padding: '1px 3px',
+                }}
+              >
+                {flatFolderOptions(tree)}
+              </select>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.45, ...clamp2 }}>
+              {g.question}
+            </div>
+            <div style={{ fontSize: 11.5, color: tk.textMuted, lineHeight: 1.5, whiteSpace: 'pre-wrap', ...clamp2 }}>
+              {g.answer}
+            </div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              <Btn tk={tk} variant="primary" onClick={() => void fillGolden(g)} title="填充到聊天页输入框(不自动发送)">
+                填充
+              </Btn>
+              <Btn tk={tk} onClick={() => void copyGolden(g)}>
+                复制
+              </Btn>
+              <Btn tk={tk} onClick={() => startEdit(g)}>
+                编辑
+              </Btn>
+              {confirmGoldenDelete === g.id ? (
+                <>
+                  <Btn tk={tk} variant="danger" onClick={() => void deleteGolden(g.id)}>
+                    确认删
+                  </Btn>
+                  <Btn tk={tk} variant="ghost" onClick={() => setConfirmGoldenDelete(null)}>
+                    取消
+                  </Btn>
+                </>
+              ) : (
+                <Btn tk={tk} variant="danger" onClick={() => setConfirmGoldenDelete(g.id)}>
+                  删除
+                </Btn>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  const renderNode = (node: FolderNode, depth: number) => (
+    <div key={node.folder.id}>
+      {folderHeader(node, depth)}
+      {createParent === node.folder.id && (
+        <div style={{ display: 'flex', gap: 6, padding: depth > 0 ? '0 0 4px 28px' : '0 0 4px 14px' }}>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="子文件夹名称"
+            autoFocus
+            style={inputStyle(tk, { flex: 1 })}
+          />
+          <Btn tk={tk} variant="primary" onClick={() => void submitCreate()}>
+            创建
+          </Btn>
+          <Btn tk={tk} variant="ghost" onClick={() => setCreateParent(null)}>
+            取消
+          </Btn>
+        </div>
+      )}
+      {node.goldens.map((g) => goldenCard(g, depth > 0))}
+      {node.children.map((c) => renderNode(c, depth + 1))}
+    </div>
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* 根层新建 */}
+      {createParent === 'root' ? (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="根文件夹名称"
+            autoFocus
+            style={inputStyle(tk, { flex: 1 })}
+          />
+          <Btn tk={tk} variant="primary" onClick={() => void submitCreate()}>
+            创建
+          </Btn>
+          <Btn tk={tk} variant="ghost" onClick={() => setCreateParent(null)}>
+            取消
+          </Btn>
+        </div>
+      ) : (
+        <Btn tk={tk} onClick={() => { setCreateParent('root'); setNewName('') }}>
+          + 新建根文件夹
+        </Btn>
+      )}
+
+      <Notice tk={tk} msg={msg} />
+
+      {tree.length === 0 && (
+        <div style={{ fontSize: 12, color: tk.textTertiary, textAlign: 'center', padding: 12 }}>
+          暂无文件夹
+        </div>
+      )}
+      {tree.map((n) => renderNode(n, 0))}
+
+      <div style={{ fontSize: 10.5, color: tk.textTertiary, lineHeight: 1.6, marginTop: 2 }}>
+        在聊天页点候选弹窗中的「设金」,或记忆列表里的「设金」,即可沉淀金标准;
+        弹窗命中时金标准置顶并放宽阈值。
+      </div>
+    </div>
+  )
+}
+
+// ─── 小工具 ────────────────────────────────────────────────────────────────────
+
+function inputStyle(tk: ThemeTokens, extra?: React.CSSProperties): React.CSSProperties {
+  return {
+    width: '100%',
+    padding: '5px 8px',
+    borderRadius: 7,
+    border: `1px solid ${tk.border}`,
+    backgroundColor: tk.bgCard,
+    color: tk.text,
+    fontSize: 12,
+    outline: 'none',
+    fontFamily: 'inherit',
+    lineHeight: 1.5,
+    ...extra,
+  }
+}
+
+/** 迁移下拉的扁平选项(两层缩进) */
+function flatFolderOptions(tree: FolderNode[]): React.ReactNode {
+  const out: React.ReactNode[] = []
+  const walk = (node: FolderNode, depth: number) => {
+    out.push(
+      <option key={node.folder.id} value={node.folder.id}>
+        {'　'.repeat(depth)}
+        {depth > 0 ? '└ ' : ''}
+        {node.folder.name}
+      </option>,
+    )
+    for (const c of node.children) walk(c, depth + 1)
+  }
+  for (const n of tree) walk(n, 0)
+  return out
+}

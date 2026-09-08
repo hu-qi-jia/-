@@ -462,4 +462,27 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') closePopup()
 })
 
+// popup 面板"填充"按钮 → SW 转发:同样只填官方输入框,绝不发送
+chrome.runtime.onMessage.addListener(
+  (
+    message: { type?: string; payload?: { text?: string } },
+    _sender: unknown,
+    sendResponse: (resp: { payload: { success: boolean; error?: string } }) => void,
+  ) => {
+    if (message?.type !== 'PDD_FILL_INPUT') return false
+    const text = String(message.payload?.text ?? '')
+    if (!text) {
+      sendResponse({ payload: { success: false, error: '填充内容为空' } })
+      return false
+    }
+    if (fillInput(text)) {
+      toast('已填充:金标准 · 请手动发送')
+      sendResponse({ payload: { success: true } })
+    } else {
+      sendResponse({ payload: { success: false, error: '未找到输入框' } })
+    }
+    return false
+  },
+)
+
 export {}
