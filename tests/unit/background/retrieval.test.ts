@@ -196,3 +196,93 @@ describe('assembleSuggestions:展开回复/折叠/金标准置顶', () => {
     expect(out).toHaveLength(5)
   })
 })
+
+// ─── 知识库源(P4-KB v1)────────────────────────────────────────────────────────
+
+describe('知识库源 knowledge', () => {
+  const DAY = 86_400_000
+  const now = 100 * DAY
+  const qv = vec(1, 0, 0)
+
+  it('知识库阈值走 goldenThreshold(放宽),历史仍走 simThreshold', () => {
+    const entries = [
+      { source: mkSource('k1', 'knowledge', '发货时间说明'), vec: vec(0.55, 0) },
+      { source: mkSource('h1', 'history', '发货时间说明'), vec: vec(0.55, 0) },
+    ]
+    // 0.55:金标准/知识库门槛 0.4 → 过;历史门槛 0.6 → 滤
+    const ranked = rankCandidates(entries, '发货时间', qv, { golden: 0.4, history: 0.6 }, now)
+    expect(ranked.map((r) => r.source.id)).toEqual(['k1'])
+  })
+
+  it('层级排序:金标准 > 知识库 > 历史(goldenPriority 开)', () => {
+    const mkRanked = (id: string, kind: 'golden' | 'knowledge' | 'history') => ({
+      source: mkSource(id, kind, `问题-${id}`),
+      cosine: 0.9,
+      rrfScore: 0.05,
+    })
+    const out = assembleSuggestions(
+      [mkRanked('h1', 'history'), mkRanked('k1', 'knowledge'), mkRanked('g1', 'golden')],
+      {
+        getReplies: (id) => [{ qaId: id, id: `r-${id}`, text: `文本-${id}`, ts: now }],
+        getGoldenAnswer: (id) => `文本-${id}`,
+        getKbContent: (id) => `文本-${id}`,
+        goldenPriority: true,
+        now,
+      },
+    )
+    expect(out.map((s) => s.sourceId)).toEqual(['g1', 'k1', 'h1'])
+    expect(out.map((s) => s.kind)).toEqual(['golden', 'knowledge', 'history'])
+  })
+
+  it('goldenPriority 关闭时不按层级,纯融合分混排', () => {
+    const mk = (id: string, kind: 'golden' | 'knowledge' | 'history', rrf: number) => ({
+      source: mkSource(id, kind, `问题-${id}`),
+      cosine: 0.9,
+      rrfScore: rrf,
+    })
+    const out = assembleSuggestions(
+      [mk('g1', 'golden', 0.01), mk('k1', 'knowledge', 0.04), mk('h1', 'history', 0.05)],
+      {
+        getReplies: (id) => [{ qaId: id, id: `r-${id}`, text: `文本-${id}`, ts: now }],
+        getGoldenAnswer: (id) => `文本-${id}`,
+        getKbContent: (id) => `文本-${id}`,
+        goldenPriority: false,
+        now,
+      },
+    )
+    expect(out.map((s) => s.sourceId)).toEqual(['h1', 'k1', 'g1'])
+  })
+
+  it('知识库正文为空(未取到)不产生候选', () => {
+    const out = assembleSuggestions(
+      [{ source: mkSource('k1', 'knowledge', '问题-k1'), cosine: 0.9, rrfScore: 0.05 }],
+      {
+        getReplies: () => [],
+        getGoldenAnswer: () => '',
+        getKbContent: () => '',
+        goldenPriority: true,
+        now,
+      },
+    )
+    expect(out).toHaveLength(0)
+  })
+
+  it('知识库与金标准同内容 → 折叠并显示金标准(徽标优先)', () => {
+    const out = assembleSuggestions(
+      [
+        { source: mkSource('k1', 'knowledge', '问题-k'), cosine: 0.9, rrfScore: 0.05 },
+        { source: mkSource('g1', 'golden', '问题-g'), cosine: 0.85, rrfScore: 0.04 },
+      ],
+      {
+        getReplies: () => [],
+        getGoldenAnswer: () => '同一段话术',
+        getKbContent: () => '同一段话术',
+        goldenPriority: true,
+        now,
+      },
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].kind).toBe('golden')
+    expect(out[0].foldCount).toBe(2)
+  })
+})

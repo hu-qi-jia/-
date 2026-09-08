@@ -52,6 +52,12 @@ import type {
   RenameFolderResponse,
   DeleteFolderRequest,
   DeleteFolderResponse,
+  CreateKbRequest,
+  CreateKbResponse,
+  UpdateKbRequest,
+  UpdateKbResponse,
+  DeleteKbRequest,
+  DeleteKbResponse,
   UpdateSettingsRequest,
   UpdateSettingsResponse,
   ExportDataRequest,
@@ -76,6 +82,11 @@ import {
   renameFolder,
 } from "./panel";
 import { exportData, importData } from "./transfer";
+import {
+  createKnowledge,
+  deleteKnowledge,
+  updateKnowledgeWithReembed,
+} from "./knowledge";
 import { saveSettings } from "./settings";
 
 const LEGACY_DB_NAME = "AIMemoryDB";
@@ -233,6 +244,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               replyCount: 0,
               goldenCount: 0,
               folderCount: 0,
+              knowledgeCount: 0,
               settings: {
                 directFillEnabled: false,
                 simThreshold: 0.5,
@@ -344,7 +356,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .catch((err) =>
           sendResponse({
             type: "GET_PANEL_DATA_RESPONSE",
-            payload: { folders: [], goldens: [], error: String(err) },
+            payload: { folders: [], goldens: [], knowledge: [], error: String(err) },
+          }),
+        );
+      return true;
+
+    case "CREATE_KB":
+      createKnowledge((message as CreateKbRequest).payload)
+        .then((out) =>
+          sendResponse({
+            type: "CREATE_KB_RESPONSE",
+            payload: out,
+          } as CreateKbResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "CREATE_KB_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "UPDATE_KB":
+      updateKnowledgeWithReembed((message as UpdateKbRequest).payload)
+        .then((out) =>
+          sendResponse({
+            type: "UPDATE_KB_RESPONSE",
+            payload: out,
+          } as UpdateKbResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "UPDATE_KB_RESPONSE",
+            payload: { error: String(err) },
+          }),
+        );
+      return true;
+
+    case "DELETE_KB":
+      deleteKnowledge((message as DeleteKbRequest).payload.id)
+        .then(() =>
+          sendResponse({
+            type: "DELETE_KB_RESPONSE",
+            payload: { success: true },
+          } as DeleteKbResponse),
+        )
+        .catch((err) =>
+          sendResponse({
+            type: "DELETE_KB_RESPONSE",
+            payload: { success: false, error: String(err) },
           }),
         );
       return true;

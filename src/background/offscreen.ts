@@ -124,13 +124,13 @@ export async function embedBatchViaOffscreen(
 }
 
 // ─── 单条嵌入入队(捕获/导入落库后触发) ─────────────────────────────────────────
-// v1 只向量化"问题锚"(qaRecords.question 与 goldens.question),回复正文不单独
-// 向量化(参与 BM25 与同内容折叠)。
+// v1 只向量化"问题锚"(qaRecords.question / goldens.question / knowledge.title),
+// 回复与知识正文不单独向量化(参与 BM25 与同内容折叠)。
 
 const EMBED_RETRY_DELAYS_MS = [2000, 5000, 15000];
 
 export function queueEmbedding(
-  kind: "qa" | "golden",
+  kind: "qa" | "golden" | "knowledge",
   id: string,
   text: string,
   attempt = 0,
@@ -140,7 +140,10 @@ export function queueEmbedding(
       if (kind === "qa") {
         return db.updateQaEmbedding(id, embedding, MODEL_NAME, EMBEDDING_VERSION);
       }
-      return db.updateGoldenEmbedding(id, embedding, MODEL_NAME, EMBEDDING_VERSION);
+      if (kind === "golden") {
+        return db.updateGoldenEmbedding(id, embedding, MODEL_NAME, EMBEDDING_VERSION);
+      }
+      return db.updateKnowledgeEmbedding(id, embedding, MODEL_NAME, EMBEDDING_VERSION);
     })
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);

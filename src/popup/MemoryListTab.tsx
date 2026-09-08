@@ -25,7 +25,8 @@ export function MemoryListTab({
 }) {
   const [items, setItems] = useState<MemoryListItem[]>([])
   const [keyword, setKeyword] = useState('')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  // 默认全部展开(问题+回复直接可见);记录用户手动折叠的条目
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [msg, setMsg] = useState<NoticeMsg>(null)
   const [loading, setLoading] = useState(true)
@@ -129,7 +130,7 @@ export function MemoryListTab({
 
       {shown.map((item) => {
         const days = remainingDays(item.questionTs, now, retentionDays)
-        const expanded = expandedId === item.id
+        const expanded = !collapsedIds.has(item.id)
         return (
           <div
             key={item.id}
@@ -142,7 +143,14 @@ export function MemoryListTab({
           >
             {/* 问题行 */}
             <div
-              onClick={() => setExpandedId(expanded ? null : item.id)}
+              onClick={() =>
+                setCollapsedIds((prev) => {
+                  const next = new Set(prev)
+                  if (next.has(item.id)) next.delete(item.id)
+                  else next.add(item.id)
+                  return next
+                })
+              }
               style={{ cursor: 'pointer' }}
             >
               <div

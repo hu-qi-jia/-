@@ -9,11 +9,19 @@ import {
   planGoldenImports,
   planFolderImports,
   planMemoryImports,
+  planKnowledgeImports,
   type ExportedGolden,
   type ExportedQa,
   type ExportedReply,
+  type ExportedKnowledge,
 } from '../../../src/background/transferPlan'
-import type { GoldenRecord, QaRecord, ReplyRecord, FolderRecord } from '../../../src/types/memory'
+import type {
+  GoldenRecord,
+  QaRecord,
+  ReplyRecord,
+  FolderRecord,
+  KnowledgeRecord,
+} from '../../../src/types/memory'
 import { SELF_TEST_SESSION_KEY, UNCATEGORIZED_FOLDER_ID } from '../../../src/types/memory'
 import { DEFAULT_SETTINGS } from '../../../src/types/memory'
 
@@ -219,5 +227,77 @@ describe('planMemoryImports', () => {
     const plan = planMemoryImports([qa('q1', '问题', 'sess-1', true)], [], new Set(), new Set())
     expect(plan.toAddQa[0].hasEmbedding).toBe(0)
     expect(plan.toAddQa[0].embedding).toBeUndefined()
+  })
+})
+
+// ─── 知识库导出/导入计划(P4-KB v1)────────────────────────────────────────────
+
+const kb = (id: string, title: string, enabled = 1, withVec = false): KnowledgeRecord => ({
+  id,
+  title,
+  content: `content-of-${id}`,
+  questionHash: `kbhash-${title}`,
+  ...(withVec
+    ? { qEmbedding: new Float32Array([0.5]), embeddingModel: 'Xenova/bge-small-zh-v1.5', embeddingVersion: '2.0.0' }
+    : {}),
+  hasEmbedding: withVec ? 1 : 0,
+  enabled,
+  createdAt: 1,
+  updatedAt: 2,
+})
+
+describe('知识库导出(信封携带)', () => {
+  it('信封始终携带 knowledge(与 includeMemory 无关),向量剥离 hasEmbedding=0', () => {
+    const env = buildExportEnvelope({
+      goldens: [],
+      folders: [],
+      knowledge: [kb('k1', '退货政策', 1, true)],
+      settings: DEFAULT_SETTINGS,
+      includeMemory: false,
+      exportedAt: 1,
+    })
+    const k = (env.knowledge as ExportedKnowledge[])[0]
+    expect('qEmbedding' in k).toBe(false)
+    expect('embeddingModel' in k).toBe(false)
+    expect(k.hasEmbedding).toBe(0)
+    expect(k.enabled).toBe(1)
+    expect(k.title).toBe('退货政策')
+  })
+
+  it('includeMemory=true 时 knowledge 照常携带且不重复', () => {
+    const env = buildExportEnvelope({
+      goldens: [],
+      folders: [],
+      knowledge: [kb('k1', '标题', 0)],
+      settings: DEFAULT_SETTINGS,
+      qaRecords: [qa('q1', '问题')],
+      replies: [],
+      includeMemory: true,
+      exportedAt: 1,
+    })
+    expect(env.knowledge).toHaveLength(1)
+    expect(env.knowledge![0].enabled).toBe(0)
+  })
+})
+
+describe('planKnowledgeImports', () => {
+  it('titleHash 已存在跳过;包内重复只留第一条', () => {
+    const plan = planKnowledgeImports(
+      [kb('k1', '退货政策'), kb('k1-dup', '退货政策'), kb('k2', '发货时间')],
+      new Set(['kbhash-退货政策']),
+    )
+    expect(plan.toAdd.map((k) => k.id)).toEqual(['k2'])
+    expect(plan.skipped).toBe(2)
+  })
+
+  it('入列记录显式挑字段:强制 hasEmbedding=0、enabled 保留、无多余字段', () => {
+    const plan = planKnowledgeImports([kb('k1', '标题', 0, true)], new Set())
+    const k = plan.toAdd[0]
+    expect(k.hasEmbedding).toBe(0)
+    expect(k.qEmbedding).toBeUndefined()
+    expect(k.enabled).toBe(0)
+    expect(Object.keys(k).sort()).toEqual(
+      ['content', 'createdAt', 'enabled', 'hasEmbedding', 'id', 'questionHash', 'title', 'updatedAt'],
+    )
   })
 })

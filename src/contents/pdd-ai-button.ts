@@ -59,6 +59,7 @@ const CSS = `
 .pddcs-cand-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .pddcs-badge { color: #fff; border-radius: 3px; font-size: 10px; padding: 1px 5px; }
 .pddcs-badge.golden { background: #f59e0b; }
+.pddcs-badge.knowledge { background: #10b981; }
 .pddcs-badge.history { background: #6366f1; }
 .pddcs-score { color: #9ca3af; font-size: 10px; }
 .pddcs-fold { color: #9ca3af; font-size: 10px; }
@@ -281,8 +282,9 @@ async function onButtonClick(li: Element, btn: HTMLButtonElement): Promise<void>
   if (act.action === 'fill') {
     const s = suggestions[act.fillIndex]
     if (fillInput(s.text)) {
+      const kindLabel = s.kind === 'golden' ? '金标准' : s.kind === 'knowledge' ? '知识库' : '历史回忆'
       toast(
-        `已填充:${s.kind === 'golden' ? '金标准' : '历史回忆'}` +
+        `已填充:${kindLabel}` +
           `${(s.foldCount ?? 1) > 1 ? ` · 同内容×${s.foldCount}` : ''} · 请手动发送`,
       )
     } else {
@@ -305,7 +307,7 @@ function closePopup(): void {
 function badge(kind: Suggestion['kind']): HTMLSpanElement {
   const b = document.createElement('span')
   b.className = `pddcs-badge ${kind}`
-  b.textContent = kind === 'golden' ? '金标准' : '历史'
+  b.textContent = kind === 'golden' ? '金标准' : kind === 'knowledge' ? '知识库' : '历史'
   return b
 }
 

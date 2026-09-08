@@ -9,6 +9,7 @@
 import type {
   FolderRecord,
   GoldenRecord,
+  KnowledgeRecord,
   PddSettings,
   QaRecord,
   ReplyRecord,
@@ -56,12 +57,26 @@ export interface ExportedReply {
   hasEmbedding: number
 }
 
+/** 导出知识库条目(标题锚向量剥离;enabled 原样保留) */
+export interface ExportedKnowledge {
+  id: string
+  title: string
+  content: string
+  questionHash: string
+  hasEmbedding: number
+  enabled: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface ExportEnvelope {
   version: string
   exportedAt: number
   settings: PddSettings
   folders: FolderRecord[]
   goldens: ExportedGolden[]
+  /** 知识库:人工精选数据,与金标准同级,始终导出(不受 includeMemory 门控) */
+  knowledge?: ExportedKnowledge[]
   qaRecords?: ExportedQa[]
   replies?: ExportedReply[]
 }
@@ -102,10 +117,22 @@ const stripReply = (r: ReplyRecord): ExportedReply => ({
   hasEmbedding: 0,
 })
 
-/** 构建导出信封;includeMemory=false 时不携带问答/回复字段 */
+const stripKnowledge = (k: KnowledgeRecord): ExportedKnowledge => ({
+  id: k.id,
+  title: k.title,
+  content: k.content,
+  questionHash: k.questionHash,
+  hasEmbedding: 0,
+  enabled: k.enabled,
+  createdAt: k.createdAt,
+  updatedAt: k.updatedAt,
+})
+
+/** 构建导出信封;includeMemory=false 时不携带问答/回复字段;知识库始终携带 */
 export function buildExportEnvelope(input: {
   goldens: GoldenRecord[]
   folders: FolderRecord[]
+  knowledge?: KnowledgeRecord[]
   settings: PddSettings
   qaRecords?: QaRecord[]
   replies?: ReplyRecord[]
@@ -118,6 +145,7 @@ export function buildExportEnvelope(input: {
     settings: input.settings,
     folders: input.folders,
     goldens: input.goldens.map(stripGolden),
+    knowledge: (input.knowledge ?? []).map(stripKnowledge),
   }
   if (input.includeMemory) {
     env.qaRecords = (input.qaRecords ?? []).map(stripQa)
@@ -263,4 +291,41 @@ export function planMemoryImports(
     })
   }
   return { toAddQa, toAddReplies, skippedQa, skippedReplies }
+}
+
+export interface KnowledgeImportPlan {
+  toAdd: KnowledgeRecord[]
+  skipped: number
+}
+
+/**
+ * 知识库导入计划:按归一化标题 hash 幂等(已存在跳过,不覆盖本地编辑);
+ * 导入包内部同 hash 重复只留第一条;enabled 原样保留,向量一律丢弃待重嵌。
+ */
+export function planKnowledgeImports(
+  incoming: ExportedKnowledge[],
+  existingTitleHashes: Set<string>,
+): KnowledgeImportPlan {
+  const toAdd: KnowledgeRecord[] = []
+  const seen = new Set<string>()
+  let skipped = 0
+  for (const k of incoming) {
+    if (existingTitleHashes.has(k.questionHash) || seen.has(k.questionHash)) {
+      skipped += 1
+      continue
+    }
+    seen.add(k.questionHash)
+    // 显式挑字段:运行时多余字段(如向量)一律不带入
+    toAdd.push({
+      id: k.id,
+      title: k.title,
+      content: k.content,
+      questionHash: k.questionHash,
+      hasEmbedding: 0,
+      enabled: k.enabled,
+      createdAt: k.createdAt,
+      updatedAt: k.updatedAt,
+    })
+  }
+  return { toAdd, skipped }
 }

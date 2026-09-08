@@ -55,13 +55,14 @@ export async function deleteQa(
   }
 }
 
-/** 面板数据:文件夹 + 金标准(剥离向量字段) */
+/** 面板数据:文件夹 + 金标准 + 知识库(剥离向量字段) */
 export async function getPanelData(
   _message: GetPanelDataRequest,
-): Promise<Pick<GetPanelDataResponse["payload"], "folders" | "goldens">> {
-  const [folders, goldens] = await Promise.all([
+): Promise<Pick<GetPanelDataResponse["payload"], "folders" | "goldens" | "knowledge">> {
+  const [folders, goldens, knowledge] = await Promise.all([
     db.listFolders(),
     db.goldens.toArray(),
+    db.listKnowledge(),
   ]);
   return {
     folders: folders.map((f) => ({
@@ -77,6 +78,14 @@ export async function getPanelData(
       answer: g.answer,
       hasEmbedding: g.hasEmbedding,
       updatedAt: g.updatedAt,
+    })),
+    knowledge: knowledge.map((k) => ({
+      id: k.id,
+      title: k.title,
+      content: k.content,
+      hasEmbedding: k.hasEmbedding,
+      enabled: k.enabled,
+      updatedAt: k.updatedAt,
     })),
   };
 }

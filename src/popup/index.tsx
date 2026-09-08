@@ -1,7 +1,7 @@
 /**
  * Popup — P3 正式面板
  *
- * 四页签(设计文档 §7):记忆列表 / 回复文件夹 / 知识库(占位禁用)/ 设置。
+ * 四页签(设计文档 §7):记忆列表 / 回复文件夹 / 知识库 / 设置。
  * P0 阶段的自检卡按设计移除(嵌入链路由首条真实查询自然触发)。
  */
 
@@ -13,6 +13,7 @@ import { sendMessage } from '../utils/message-passing'
 import type { GetStatsResponse } from '../types/messages'
 import { MemoryListTab } from './MemoryListTab'
 import { FoldersTab } from './FoldersTab'
+import { KnowledgeTab } from './KnowledgeTab'
 import { SettingsTab } from './SettingsTab'
 
 const POPUP_WIDTH = 380
@@ -86,7 +87,7 @@ function App() {
           </div>
           <div style={{ fontSize: 10.5, color: tk.textMuted, marginTop: 1 }}>
             {stats
-              ? `问答 ${stats.qaCount} · 回复 ${stats.replyCount} · 金标准 ${stats.goldenCount}`
+              ? `问答 ${stats.qaCount} · 回复 ${stats.replyCount} · 金标准 ${stats.goldenCount} · 知识 ${stats.knowledgeCount}`
               : '读取中…'}
           </div>
         </div>
@@ -143,28 +144,9 @@ function App() {
           <MemoryListTab tk={tk} retentionDays={stats?.settings.retentionDays ?? 90} onDataChanged={refreshStats} />
         )}
         {tab === 'folders' && <FoldersTab tk={tk} onDataChanged={refreshStats} />}
-        {tab === 'knowledge' && <KnowledgePlaceholder tk={tk} />}
+        {tab === 'knowledge' && <KnowledgeTab tk={tk} onDataChanged={refreshStats} />}
         {tab === 'settings' && <SettingsTab tk={tk} onDataChanged={refreshStats} />}
       </div>
-    </div>
-  )
-}
-
-function KnowledgePlaceholder({ tk }: { tk: ThemeTokens }) {
-  return (
-    <div
-      style={{
-        padding: '28px 12px',
-        textAlign: 'center',
-        color: tk.textTertiary,
-        fontSize: 12,
-        lineHeight: 1.7,
-      }}
-    >
-      <div style={{ fontSize: 26, marginBottom: 8 }}>📚</div>
-      知识库将在后续版本开放
-      <br />
-      (schema 已预留,当前版本请使用金标准)
     </div>
   )
 }

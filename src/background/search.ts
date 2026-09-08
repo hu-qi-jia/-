@@ -1,6 +1,6 @@
 /**
- * 检索编排(P2,设计文档 §6.2):
- *   查询向量(offscreen)→ 双源读库 → rankCandidates(阈值+RRF)
+ * 检索编排(P2,设计文档 §6.2;P4-KB 扩第三源):
+ *   查询向量(offscreen)→ 三源读库(问答/金标准/知识库)→ rankCandidates(阈值+RRF)
  *   → 展开回复 → assembleSuggestions(折叠/置顶)。
  * 纯逻辑在 retrieval.ts;此处只做 IO 与装配。
  */
@@ -47,9 +47,10 @@ export async function searchSuggestions(rawQuery: string): Promise<SearchOutcome
 
   const now = Date.now();
 
-  const [qas, goldens] = await Promise.all([
+  const [qas, goldens, kbs] = await Promise.all([
     db.getEmbeddedQaRecords(),
     db.getEmbeddedGoldens(),
+    db.getEmbeddedKnowledge(),
   ]);
 
   const entries: Array<{ source: RetSource; vec: Float32Array }> = [
@@ -70,6 +71,15 @@ export async function searchSuggestions(rawQuery: string): Promise<SearchOutcome
         questionTs: g.updatedAt,
       },
       vec: g.qEmbedding as Float32Array,
+    })),
+    ...kbs.map((k) => ({
+      source: {
+        id: k.id,
+        kind: "knowledge" as const,
+        question: k.title,
+        questionTs: k.updatedAt,
+      },
+      vec: k.qEmbedding as Float32Array,
     })),
   ];
 
@@ -95,10 +105,12 @@ export async function searchSuggestions(rawQuery: string): Promise<SearchOutcome
     }
   }
   const goldensById = new Map(goldens.map((g) => [g.id, g]));
+  const kbById = new Map(kbs.map((k) => [k.id, k]));
 
   const suggestions = assembleSuggestions(ranked, {
     getReplies: (id) => repliesByQa.get(id) ?? [],
     getGoldenAnswer: (id) => goldensById.get(id)?.answer ?? "",
+    getKbContent: (id) => kbById.get(id)?.content ?? "",
     goldenPriority: settings.goldenPriorityEnabled,
     now,
   });

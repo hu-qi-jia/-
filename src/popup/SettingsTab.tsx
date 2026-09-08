@@ -129,26 +129,45 @@ export function SettingsTab({
     })()
   }, [])
 
-  const save = async () => {
-    if (!draft) return
-    setBusy(true)
-    try {
-      const resp = await sendMessage<UpdateSettingsResponse>({
-        type: 'UPDATE_SETTINGS',
-        payload: draft,
-      })
-      if (resp.payload.error) {
-        setMsg({ ok: false, text: `保存失败:${resp.payload.error}` })
-      } else {
-        setDraft(resp.payload.settings ?? draft)
-        setMsg({ ok: true, text: '设置已保存' })
-        await onDataChanged()
+  // 自动保存:开关/滑杆变更即时落库,弹窗随时可关不丢改动。
+  // (真实 bug:此前依赖手动"保存设置",popup 失焦关闭后未保存的 draft 直接丢失。)
+  const sliderTimer = useRef<number>(0)
+
+  const persist = useCallback(
+    async (next: PddSettings) => {
+      window.clearTimeout(sliderTimer.current)
+      setDraft(next)
+      setBusy(true)
+      try {
+        const resp = await sendMessage<UpdateSettingsResponse>({
+          type: 'UPDATE_SETTINGS',
+          payload: next,
+        })
+        if (resp.payload.error) {
+          setMsg({ ok: false, text: `保存失败:${resp.payload.error}` })
+        } else {
+          setDraft(resp.payload.settings ?? next)
+          setMsg({ ok: true, text: '已保存' })
+          await onDataChanged()
+        }
+      } catch (err) {
+        setMsg({ ok: false, text: `保存失败:${String(err)}` })
+      } finally {
+        setBusy(false)
       }
-    } catch (err) {
-      setMsg({ ok: false, text: `保存失败:${String(err)}` })
-    } finally {
-      setBusy(false)
-    }
+    },
+    [onDataChanged],
+  )
+
+  /** 滑杆:拖动即时反馈,detent 后 500ms 防抖落库 */
+  const persistSlider = (patch: Partial<PddSettings>) => {
+    if (!draft) return
+    const next = { ...draft, ...patch }
+    setDraft(next)
+    window.clearTimeout(sliderTimer.current)
+    sliderTimer.current = window.setTimeout(() => {
+      void persist(next)
+    }, 500)
   }
 
   const exportJson = async () => {
@@ -196,7 +215,7 @@ export function SettingsTab({
       }
       setMsg({
         ok: true,
-        text: `导入完成:金标准 +${p.addedGoldens ?? 0}(跳过 ${p.skippedGoldens ?? 0}) · 文件夹 +${p.addedFolders ?? 0} · 问答 +${p.addedQa ?? 0} · 回复 +${p.addedReplies ?? 0};向量后台重嵌`,
+        text: `导入完成:金标准 +${p.addedGoldens ?? 0}(跳过 ${p.skippedGoldens ?? 0}) · 文件夹 +${p.addedFolders ?? 0} · 知识 +${p.addedKnowledge ?? 0}(跳过 ${p.skippedKnowledge ?? 0}) · 问答 +${p.addedQa ?? 0} · 回复 +${p.addedReplies ?? 0};向量后台重嵌`,
       })
       await onDataChanged()
     } catch {
@@ -220,20 +239,20 @@ export function SettingsTab({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <Notice tk={tk} msg={msg} />
 
-      <Card tk={tk} title="检索与填充">
+      <Card tk={tk} title="检索与填充(改动即时生效)">
         <Toggle
           tk={tk}
           label="直接填充"
           desc="开启后点击 AI 按钮不弹窗,直接填充最高分候选(默认关)"
           checked={draft.directFillEnabled}
-          onChange={(v) => setDraft({ ...draft, directFillEnabled: v })}
+          onChange={(v) => void persist({ ...draft, directFillEnabled: v })}
         />
         <Toggle
           tk={tk}
           label="金标准优先"
           desc="候选排序时金标准置顶(推荐保持开启)"
           checked={draft.goldenPriorityEnabled}
-          onChange={(v) => setDraft({ ...draft, goldenPriorityEnabled: v })}
+          onChange={(v) => void persist({ ...draft, goldenPriorityEnabled: v })}
         />
         <Slider
           tk={tk}
@@ -242,7 +261,7 @@ export function SettingsTab({
           min={0.3}
           max={0.9}
           step={0.05}
-          onChange={(v) => setDraft({ ...draft, simThreshold: v })}
+          onChange={(v) => persistSlider({ simThreshold: v })}
           format={(v) => v.toFixed(2)}
         />
         <Slider
@@ -252,7 +271,7 @@ export function SettingsTab({
           min={0.2}
           max={0.8}
           step={0.05}
-          onChange={(v) => setDraft({ ...draft, goldenThreshold: v })}
+          onChange={(v) => persistSlider({ goldenThreshold: v })}
           format={(v) => v.toFixed(2)}
         />
         <Slider
@@ -262,12 +281,9 @@ export function SettingsTab({
           min={30}
           max={365}
           step={5}
-          onChange={(v) => setDraft({ ...draft, retentionDays: v })}
+          onChange={(v) => persistSlider({ retentionDays: v })}
           format={(v) => `${v} 天`}
         />
-        <Btn tk={tk} variant="primary" disabled={busy} onClick={() => void save()}>
-          {busy ? '处理中…' : '保存设置'}
-        </Btn>
       </Card>
 
       <Card tk={tk} title="导入 / 导出(v2)">

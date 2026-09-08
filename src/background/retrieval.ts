@@ -2,7 +2,8 @@
  * 混合检索纯逻辑(设计文档 §6.2)—— 不触碰 chrome/Dexie/offscreen。
  *
  * 管线:候选池(按来源类型阈值过滤原始余弦)→ 双路排名(向量×时间衰减 /
- * BM25)→ RRF 融合 → 展开回复候选 → 同内容折叠 → 金标准置顶排序。
+ * BM25)→ RRF 融合 → 展开回复/知识正文候选 → 同内容折叠 → 层级置顶
+ * (金标准 > 知识库 > 历史,可关)。
  *
  * 设计要点:
  *  - 检索锚 = 问题文本(买家问题 vs 历史/金标准问题);回复正文不向量化;
@@ -16,15 +17,15 @@ import type { Suggestion } from '../types/messages'
 
 export type { Suggestion }
 
-export type SourceKind = 'golden' | 'history'
+export type SourceKind = 'golden' | 'knowledge' | 'history'
 
-/** 参与检索的源(金标准或问答记录)—— 只带纯数据,向量由调用方并行给出 */
+/** 参与检索的源(金标准 / 知识库 / 问答记录)—— 只带纯数据,向量由调用方并行给出 */
 export interface RetSource {
   id: string
   kind: SourceKind
-  /** 原始问题全文(候选展示"原始问题摘要"用) */
+  /** 原始问题全文(候选展示"原始问题摘要"用);知识库 = 标题 */
   question: string
-  /** 问题时间(历史=questionTs,金标准=updatedAt) */
+  /** 问题时间(历史=questionTs,金标准/知识库=updatedAt) */
   questionTs: number
 }
 
@@ -145,7 +146,8 @@ export function timeDecay(ts: number, now: number, halfLifeDays: number): number
 
 /**
  * 阈值过滤 + 双路排名 + RRF 融合。
- * 历史源阈值 simThreshold(默认 0.5),金标准源 goldenThreshold(默认 0.4,放宽)。
+ * 历史源阈值 simThreshold(默认 0.5);金标准/知识库同走 goldenThreshold
+ * (默认 0.4,放宽)——均为人工精选源,宁多勿漏。
  * 返回按 rrfScore 降序排列。
  */
 export function rankCandidates(
@@ -159,7 +161,7 @@ export function rankCandidates(
   const survivors: Array<{ source: RetSource; cosine: number }> = []
   for (const { source, vec } of entries) {
     const cosine = Math.max(0, Math.min(1, cosineSim(qvec, vec)))
-    const gate = source.kind === 'golden' ? thresholds.golden : thresholds.history
+    const gate = source.kind === 'history' ? thresholds.history : thresholds.golden
     if (cosine >= gate) survivors.push({ source, cosine })
   }
   if (survivors.length === 0) return []
@@ -187,14 +189,16 @@ export function rankCandidates(
 
 /**
  * 候选组装:过阈源展开为回复候选 → 同内容折叠(hashText)→ 金标准置顶排序 → 截断。
- * getReplies / getGoldenAnswer 由调用方注入(DAO 或测试桩)。
- * 组内胜者:金标准 > 历史;同 kind 取父问题余弦最高,平分取最新回复时间。
+ * getReplies / getGoldenAnswer / getKbContent 由调用方注入(DAO 或测试桩;
+ * getKbContent 缺省视为知识库为空)。
+ * 组内胜者:金标准 > 知识库 > 历史;同 kind 取父问题余弦最高,平分取最新回复时间。
  */
 export function assembleSuggestions(
   ranked: RankedSource[],
   opts: {
     getReplies: (qaId: string) => RetReply[]
     getGoldenAnswer: (goldenId: string) => string
+    getKbContent?: (id: string) => string
     goldenPriority: boolean
     now: number
     maxSuggestions?: number
@@ -204,6 +208,7 @@ export function assembleSuggestions(
     ts: number
     rrfScore: number
   }
+  const getKb = opts.getKbContent ?? (() => '')
 
   const candidates: Cand[] = []
   for (const r of ranked) {
@@ -213,6 +218,22 @@ export function assembleSuggestions(
       candidates.push({
         kind: 'golden',
         text: answer,
+        sourceQuestion: r.source.question,
+        score: r.cosine,
+        sourceId: r.source.id,
+        replyId: undefined,
+        ts: r.source.questionTs,
+        rrfScore: r.rrfScore,
+        foldCount: 1,
+      })
+      continue
+    }
+    if (r.source.kind === 'knowledge') {
+      const content = getKb(r.source.id)
+      if (!content) continue
+      candidates.push({
+        kind: 'knowledge',
+        text: content,
         sourceQuestion: r.source.question,
         score: r.cosine,
         sourceId: r.source.id,
@@ -239,7 +260,7 @@ export function assembleSuggestions(
     }
   }
 
-  // 同内容折叠:hashText 相同即同内容;金标准优先,其次高分,平分取最新
+  // 同内容折叠:hashText 相同即同内容;金标准优先,其次知识库,再次高分,平分取最新
   const groups = new Map<string, Cand[]>()
   for (const c of candidates) {
     const key = hashText(c.text)
@@ -248,18 +269,23 @@ export function assembleSuggestions(
     else groups.set(key, [c])
   }
 
+  const foldWinnerRank = (k: Suggestion['kind']): number =>
+    k === 'golden' ? 0 : k === 'knowledge' ? 1 : 2
+
   const winners = [...groups.values()].map((g): Cand => {
     if (g.length === 1) return g[0]
-    const golden = g.find((c) => c.kind === 'golden')
-    if (golden) return { ...golden, foldCount: g.length }
-    const best = [...g].sort(
-      (a, b) => b.score - a.score || b.ts - a.ts,
+    const top = [...g].sort(
+      (a, b) =>
+        foldWinnerRank(a.kind) - foldWinnerRank(b.kind) ||
+        b.score - a.score ||
+        b.ts - a.ts,
     )[0]
-    return { ...best, foldCount: g.length }
+    return { ...top, foldCount: g.length }
   })
 
-  // 排序:金标准优先(可选)→ 融合分 → 原始余弦 → 新
-  const tier = (c: Cand): number => (opts.goldenPriority && c.kind === 'golden' ? 0 : 1)
+  // 排序:金标准 > 知识库 > 历史(可选置顶)→ 融合分 → 原始余弦 → 新
+  const tier = (c: Cand): number =>
+    opts.goldenPriority ? foldWinnerRank(c.kind) : 1
   winners.sort(
     (a, b) =>
       tier(a) - tier(b) ||

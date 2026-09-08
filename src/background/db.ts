@@ -8,6 +8,7 @@
  *   replies   — 客服回复(候选本体,contentHash 折叠)
  *   goldens   — 金标准(长期,豁免保留期,独立可编辑问答文档)
  *   folders   — 回复文件夹(两层,parentId=null 即根层)
+ *   knowledge — 知识库条目(人工维护"标题+正文"话术卡,豁免保留期)
  *   errors    — 错误日志
  *
  * hasEmbedding 三态:0=待嵌(启动扫描重试) 1=已嵌 -1=嵌入失败(记录 errors,下次启动扫描重试)
@@ -17,6 +18,7 @@ import type {
   ErrorLog,
   FolderRecord,
   GoldenRecord,
+  KnowledgeRecord,
   QaRecord,
   ReplyRecord,
 } from "../types/memory";
@@ -31,6 +33,7 @@ export class PddDatabase extends Dexie {
   replies!: Table<ReplyRecord, string>;
   goldens!: Table<GoldenRecord, string>;
   folders!: Table<FolderRecord, string>;
+  knowledge!: Table<KnowledgeRecord, string>;
   errors!: Table<ErrorLog, number>;
 
   constructor() {
@@ -43,6 +46,11 @@ export class PddDatabase extends Dexie {
       goldens: "id, folderId, questionHash, hasEmbedding",
       folders: "id, parentId",
       errors: "++id, timestamp",
+    });
+
+    // P4-KB v1:知识库表(已建库的浏览器走 Dexie 升级,新装直接建 version(2))
+    this.version(2).stores({
+      knowledge: "id, questionHash, hasEmbedding, enabled",
     });
   }
 
@@ -105,22 +113,26 @@ export class PddDatabase extends Dexie {
     replyCount: number;
     goldenCount: number;
     folderCount: number;
+    knowledgeCount: number;
   }> {
     const selfTestQaCount = await this.qaRecords
       .where("sessionKey")
       .equals(SELF_TEST_SESSION_KEY)
       .count();
-    const [qaTotal, replyCount, goldenCount, folderCount] = await Promise.all([
-      this.qaRecords.count(),
-      this.replies.count(),
-      this.goldens.count(),
-      this.folders.count(),
-    ]);
+    const [qaTotal, replyCount, goldenCount, folderCount, knowledgeCount] =
+      await Promise.all([
+        this.qaRecords.count(),
+        this.replies.count(),
+        this.goldens.count(),
+        this.folders.count(),
+        this.knowledge.count(),
+      ]);
     return {
       qaCount: qaTotal - selfTestQaCount,
       replyCount,
       goldenCount,
       folderCount,
+      knowledgeCount,
     };
   }
 
@@ -254,12 +266,28 @@ export class PddDatabase extends Dexie {
     });
   }
 
-  async markEmbeddingFailed(kind: "qa" | "golden", id: string): Promise<void> {
-    if (kind === "qa") {
-      await this.qaRecords.update(id, { hasEmbedding: -1 });
-    } else {
-      await this.goldens.update(id, { hasEmbedding: -1 });
-    }
+  async updateKnowledgeEmbedding(
+    id: string,
+    embedding: Float32Array,
+    model: string,
+    version: string,
+  ): Promise<void> {
+    await this.knowledge.update(id, {
+      qEmbedding: embedding,
+      embeddingModel: model,
+      embeddingVersion: version,
+      hasEmbedding: 1,
+      updatedAt: Date.now(),
+    });
+  }
+
+  async markEmbeddingFailed(
+    kind: "qa" | "golden" | "knowledge",
+    id: string,
+  ): Promise<void> {
+    const table =
+      kind === "qa" ? this.qaRecords : kind === "golden" ? this.goldens : this.knowledge;
+    await table.update(id, { hasEmbedding: -1 });
   }
 
   /** 待嵌问答(启动扫描/批量补嵌) */
@@ -272,6 +300,11 @@ export class PddDatabase extends Dexie {
     return this.goldens.where("hasEmbedding").equals(0).limit(limit).toArray();
   }
 
+  /** 待嵌知识库条目 */
+  async getPendingKnowledgeEmbeddings(limit = 100): Promise<KnowledgeRecord[]> {
+    return this.knowledge.where("hasEmbedding").equals(0).limit(limit).toArray();
+  }
+
   /** 已嵌问答记录(检索源 B;TTL 保证都在保留期内) */
   async getEmbeddedQaRecords(): Promise<QaRecord[]> {
     return this.qaRecords.where("hasEmbedding").equals(1).toArray();
@@ -280,6 +313,15 @@ export class PddDatabase extends Dexie {
   /** 已嵌金标准(检索源 A) */
   async getEmbeddedGoldens(): Promise<GoldenRecord[]> {
     return this.goldens.where("hasEmbedding").equals(1).toArray();
+  }
+
+  /** 已嵌且启用中的知识库条目(检索源 C;停用条目不参与检索) */
+  async getEmbeddedKnowledge(): Promise<KnowledgeRecord[]> {
+    return this.knowledge
+      .where("hasEmbedding")
+      .equals(1)
+      .filter((k) => k.enabled === 1)
+      .toArray();
   }
 
   /** 批量取回复(检索候选展开) */
@@ -317,6 +359,36 @@ export class PddDatabase extends Dexie {
       return this.goldens.filter((g) => g.folderId === null).toArray();
     }
     return this.goldens.where("folderId").equals(folderId).toArray();
+  }
+
+  // ─── 知识库(knowledge) ────────────────────────────────────────────────────────
+
+  async addKnowledge(record: KnowledgeRecord): Promise<string> {
+    await this.knowledge.add(record);
+    return record.id;
+  }
+
+  async getKnowledge(id: string): Promise<KnowledgeRecord | undefined> {
+    return this.knowledge.get(id);
+  }
+
+  /** 按归一化标题哈希查重(创建/导入幂等) */
+  async findKnowledgeByTitleHash(questionHash: string): Promise<KnowledgeRecord | undefined> {
+    return this.knowledge.where("questionHash").equals(questionHash).first();
+  }
+
+  async listKnowledge(limit = 200): Promise<KnowledgeRecord[]> {
+    return this.knowledge
+      .toArray()
+      .then((rows) => rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit));
+  }
+
+  async updateKnowledge(id: string, patch: Partial<KnowledgeRecord>): Promise<void> {
+    await this.knowledge.update(id, { ...patch, updatedAt: Date.now() });
+  }
+
+  async deleteKnowledge(id: string): Promise<void> {
+    await this.knowledge.delete(id);
   }
 
   // ─── 回复文件夹(folders) ──────────────────────────────────────────────────────

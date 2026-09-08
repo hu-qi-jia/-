@@ -10,6 +10,7 @@ import {
   buildExportEnvelope,
   planFolderImports,
   planGoldenImports,
+  planKnowledgeImports,
   planMemoryImports,
   type ExportEnvelope,
 } from "./transferPlan";
@@ -20,17 +21,20 @@ export async function exportData(
 ): Promise<{ envelope?: ExportEnvelope; error?: string }> {
   try {
     const includeMemory = !!message.payload?.includeMemory;
-    const [goldens, folders, settings, qaRecords, replies] = await Promise.all([
-      db.goldens.toArray(),
-      db.listFolders(),
-      loadSettings(),
-      includeMemory ? db.qaRecords.toArray() : Promise.resolve([]),
-      includeMemory ? db.replies.toArray() : Promise.resolve([]),
-    ]);
+    const [goldens, folders, knowledge, settings, qaRecords, replies] =
+      await Promise.all([
+        db.goldens.toArray(),
+        db.listFolders(),
+        db.knowledge.toArray(),
+        loadSettings(),
+        includeMemory ? db.qaRecords.toArray() : Promise.resolve([]),
+        includeMemory ? db.replies.toArray() : Promise.resolve([]),
+      ]);
     return {
       envelope: buildExportEnvelope({
         goldens,
         folders,
+        knowledge,
         settings,
         qaRecords,
         replies,
@@ -48,6 +52,8 @@ export interface ImportOutcome {
   skippedGoldens?: number;
   addedFolders?: number;
   skippedFolders?: number;
+  addedKnowledge?: number;
+  skippedKnowledge?: number;
   addedQa?: number;
   skippedQa?: number;
   addedReplies?: number;
@@ -89,6 +95,14 @@ export async function importData(message: ImportDataRequest): Promise<ImportOutc
     if (goldenPlan.toAdd.length > 0) await db.goldens.bulkAdd(goldenPlan.toAdd);
     for (const g of goldenPlan.toAdd) queueEmbedding("golden", g.id, g.question);
 
+    // 2.5) 知识库(标题 hash 幂等;enabled 原样保留,向量一律重嵌)
+    const existingKbHashes = new Set(
+      (await db.knowledge.toArray()).map((k) => k.questionHash),
+    );
+    const kbPlan = planKnowledgeImports(asArray(env.knowledge), existingKbHashes);
+    if (kbPlan.toAdd.length > 0) await db.knowledge.bulkAdd(kbPlan.toAdd);
+    for (const k of kbPlan.toAdd) queueEmbedding("knowledge", k.id, k.title);
+
     // 3) 记忆搬库(可选部分;问答重嵌排队)
     let addedQa = 0;
     let skippedQa = 0;
@@ -126,6 +140,8 @@ export async function importData(message: ImportDataRequest): Promise<ImportOutc
       skippedGoldens: goldenPlan.skipped,
       addedFolders: folderPlan.toAdd.length,
       skippedFolders: folderPlan.skipped,
+      addedKnowledge: kbPlan.toAdd.length,
+      skippedKnowledge: kbPlan.skipped,
       addedQa,
       skippedQa,
       addedReplies,

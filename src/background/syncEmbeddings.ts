@@ -2,14 +2,14 @@ import { db } from "./db";
 import { MODEL_NAME, EMBEDDING_VERSION } from "./embedding";
 import { embedBatchViaOffscreen } from "./offscreen";
 
-// 启动/导入后批量补嵌:把所有 hasEmbedding=0 的问答与金标准拉齐向量。
+// 启动/导入后批量补嵌:把所有 hasEmbedding=0 的问答/金标准/知识库拉齐向量。
 // 100 条/批 → 每次批处理一次 IPC 往返(原项目习惯保留)。
 
 const BATCH_SIZE = 100;
 
 let _isProcessing = false;
 
-type PendingTarget = { id: string; text: string; kind: "qa" | "golden" };
+type PendingTarget = { id: string; text: string; kind: "qa" | "golden" | "knowledge" };
 
 async function embedPendingBatch(targets: PendingTarget[]): Promise<void> {
   // 一次 EMBED_BATCH 调用;offscreen 内串行推理(单线程约束)
@@ -43,8 +43,15 @@ async function embedPendingBatch(targets: PendingTarget[]): Promise<void> {
           MODEL_NAME,
           EMBEDDING_VERSION,
         );
-      } else {
+      } else if (target.kind === "golden") {
         await db.updateGoldenEmbedding(
+          target.id,
+          embedding,
+          MODEL_NAME,
+          EMBEDDING_VERSION,
+        );
+      } else {
+        await db.updateKnowledgeEmbedding(
           target.id,
           embedding,
           MODEL_NAME,
@@ -67,7 +74,7 @@ export async function processPendingEmbeddings(): Promise<void> {
 
   try {
     for (;;) {
-      // 两源交替补嵌:金标准(小表先清) → 问答记录
+      // 三源交替补嵌:金标准 → 知识库(小表先清) → 问答记录
       const pendingGoldens = await db.getPendingGoldenEmbeddings(BATCH_SIZE);
       if (pendingGoldens.length > 0) {
         await embedPendingBatch(
@@ -77,7 +84,18 @@ export async function processPendingEmbeddings(): Promise<void> {
             text: g.question,
           })),
         );
-        continue; // 同一批清完后再看问答
+        continue; // 同一批清完后再看下一源
+      }
+      const pendingKb = await db.getPendingKnowledgeEmbeddings(BATCH_SIZE);
+      if (pendingKb.length > 0) {
+        await embedPendingBatch(
+          pendingKb.map((k) => ({
+            kind: "knowledge" as const,
+            id: k.id,
+            text: k.title,
+          })),
+        );
+        continue;
       }
       const pendingQas = await db.getPendingQaEmbeddings(BATCH_SIZE);
       if (pendingQas.length === 0) break;

@@ -88,6 +88,28 @@ export interface FolderRecord {
   createdAt: number
 }
 
+/** 知识库条目(knowledge,P4-KB v1):人工维护的"标题+正文"话术卡,豁免保留期 */
+export interface KnowledgeRecord {
+  /** 主键 uuid */
+  id: string
+  /** 条目标题(检索锚,类比金标准 question) */
+  title: string
+  /** 正文(候选填充/复制的内容,类比金标准 answer) */
+  content: string
+  /** 归一化标题哈希 —— 创建/导入幂等去重 */
+  questionHash: string
+  /** 标题锚向量;标题实质变更即作废旧向量、自动重嵌 */
+  qEmbedding?: Float32Array
+  embeddingModel?: string
+  embeddingVersion?: string
+  /** 0=待嵌 1=已嵌 -1=失败(下次启动扫描重试) */
+  hasEmbedding: number
+  /** 1=参与检索 0=停用(停用不删数据、不重嵌) */
+  enabled: number
+  createdAt: number
+  updatedAt: number
+}
+
 export const UNCATEGORIZED_FOLDER_ID = 'uncategorized'
 export const UNCATEGORIZED_FOLDER_NAME = '未分类'
 

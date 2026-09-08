@@ -35,6 +35,7 @@ export interface GetStatsResponse {
     replyCount: number
     goldenCount: number
     folderCount: number
+    knowledgeCount: number
     settings: PddSettings
     embeddingModel: string
   }
@@ -105,7 +106,7 @@ export interface PddIngestResponse {
 
 /** 检索候选(弹窗/直填消费);来源 kind 决定徽标与直填优先级 */
 export interface Suggestion {
-  kind: 'golden' | 'history'
+  kind: 'golden' | 'knowledge' | 'history'
   /** 回复正文(填充/复制的内容) */
   text: string
   /** 来源问题的原始全文(UI 截断展示) */
@@ -207,13 +208,23 @@ export interface PanelGolden {
   updatedAt: number
 }
 
+/** 知识库条目面板线类型(剥向量) */
+export interface PanelKnowledge {
+  id: string
+  title: string
+  content: string
+  hasEmbedding: number
+  enabled: number
+  updatedAt: number
+}
+
 export interface GetPanelDataRequest {
   type: 'GET_PANEL_DATA'
 }
 
 export interface GetPanelDataResponse {
   type: 'GET_PANEL_DATA_RESPONSE'
-  payload: { folders: PanelFolder[]; goldens: PanelGolden[]; error?: string }
+  payload: { folders: PanelFolder[]; goldens: PanelGolden[]; knowledge: PanelKnowledge[]; error?: string }
 }
 
 /** 编辑保存即重嵌(问题实质变更时);folderId 兼作"迁移文件夹" */
@@ -272,6 +283,40 @@ export interface DeleteFolderResponse {
   payload: { success: boolean; error?: string }
 }
 
+// ─── P4-KB 知识库 CRUD(popup → SW)───────────────────────────────────────────
+// 幂等:标题归一化 hash 已存在则不重复建,返回 exists;
+// 标题实质变更才重嵌;enabled 停用切换不重嵌。
+
+export interface CreateKbRequest {
+  type: 'CREATE_KB'
+  payload: { title: string; content: string }
+}
+
+export interface CreateKbResponse {
+  type: 'CREATE_KB_RESPONSE'
+  payload: { id?: string; exists?: boolean; error?: string }
+}
+
+export interface UpdateKbRequest {
+  type: 'UPDATE_KB'
+  payload: { id: string; title?: string; content?: string; enabled?: number }
+}
+
+export interface UpdateKbResponse {
+  type: 'UPDATE_KB_RESPONSE'
+  payload: { id?: string; reembed?: boolean; error?: string }
+}
+
+export interface DeleteKbRequest {
+  type: 'DELETE_KB'
+  payload: { id: string }
+}
+
+export interface DeleteKbResponse {
+  type: 'DELETE_KB_RESPONSE'
+  payload: { success: boolean; error?: string }
+}
+
 // ─── P3 设置(popup → SW)───────────────────────────────────────────────────────
 
 export interface UpdateSettingsRequest {
@@ -304,6 +349,8 @@ export interface ImportDataResponse {
     skippedGoldens?: number
     addedFolders?: number
     skippedFolders?: number
+    addedKnowledge?: number
+    skippedKnowledge?: number
     addedQa?: number
     skippedQa?: number
     addedReplies?: number
@@ -358,6 +405,9 @@ export type ExtensionMessage =
   | CreateFolderRequest
   | RenameFolderRequest
   | DeleteFolderRequest
+  | CreateKbRequest
+  | UpdateKbRequest
+  | DeleteKbRequest
   | UpdateSettingsRequest
   | ExportDataRequest
   | ImportDataRequest
@@ -378,6 +428,9 @@ export type ExtensionMessageResponse =
   | CreateFolderResponse
   | RenameFolderResponse
   | DeleteFolderResponse
+  | CreateKbResponse
+  | UpdateKbResponse
+  | DeleteKbResponse
   | UpdateSettingsResponse
   | ExportDataResponse
   | ImportDataResponse
