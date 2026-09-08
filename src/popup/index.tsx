@@ -1,14 +1,23 @@
 /**
- * Popup — P3 正式面板
+ * Popup — Codex 风格正式面板
  *
- * 四页签(设计文档 §7):记忆列表 / 回复文件夹 / 知识库 / 设置。
- * P0 阶段的自检卡按设计移除(嵌入链路由首条真实查询自然触发)。
+ * 布局:左侧 52px 图标导航栏(Codex app 同款)+ 右侧内容区。
+ * 四页签(设计文档 §7)与全部功能不变:记忆列表 / 回复文件夹 / 知识库 / 设置。
+ * 视觉:ChatGPT 设计令牌 —— 表面靠明度分层、胶囊控件、单强调色。
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
 import { ThemeProvider, useTheme } from '../ui/theme-context'
 import { getThemeTokens, type ThemeTokens } from '../ui/theme'
-import { SunIcon, MoonIcon } from '../ui/icons'
+import {
+  AiSparkIcon,
+  BookOpenIcon,
+  FolderIcon,
+  GearIcon,
+  MessageSquareIcon,
+  MoonIcon,
+  SunIcon,
+} from '../ui/icons'
 import { sendMessage } from '../utils/message-passing'
 import type { GetStatsResponse } from '../types/messages'
 import { MemoryListTab } from './MemoryListTab'
@@ -16,21 +25,56 @@ import { FoldersTab } from './FoldersTab'
 import { KnowledgeTab } from './KnowledgeTab'
 import { SettingsTab } from './SettingsTab'
 
-const POPUP_WIDTH = 380
+const RAIL_W = 52
+const POPUP_WIDTH = 400
 const POPUP_MAX_HEIGHT = 560
 
 const RESET_CSS = `
 html, body { margin: 0; padding: 0; }
 * { box-sizing: border-box; }
+
+/* ── 胶囊按钮(ChatGPT 操作按钮)────────────────────────── */
+.pddcs-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 4px 12px; border-radius: 9999px; border: 1px solid;
+  font-size: 11.5px; font-weight: 500; line-height: 1.5;
+  cursor: pointer; white-space: nowrap; font-family: inherit;
+  transition: background-color .12s ease, border-color .12s ease, opacity .12s ease;
+}
+.pddcs-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── 输入框(focus 时描边提亮,无重投影)────────────────── */
+.pddcs-input {
+  width: 100%; padding: 7px 12px; border-radius: 12px; border: 1px solid;
+  font-size: 12px; outline: none; font-family: inherit; line-height: 1.5;
+  transition: border-color .12s ease;
+}
+
+/* ── 滚动条:细、悬浮才出现(ChatGPT 同款)──────────────── */
+.pddcs-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.pddcs-scroll:hover { scrollbar-color: rgba(0,0,0,.14) transparent; }
+.pddcs-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.pddcs-scroll::-webkit-scrollbar-thumb {
+  background: transparent; border-radius: 9999px; border: 2px solid transparent;
+  background-clip: content-box; min-height: 36px;
+}
+.pddcs-scroll:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); background-clip: content-box; }
+
+/* ── 导航图标按钮:悬浮浅灰圆角块 ───────────────────────── */
+.pddcs-rail-btn {
+  width: 36px; height: 36px; padding: 0; border: none; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative; transition: background-color .12s ease;
+}
 `
 
 type TabId = 'memory' | 'folders' | 'knowledge' | 'settings'
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: 'memory', label: '记忆' },
-  { id: 'folders', label: '文件夹' },
-  { id: 'knowledge', label: '知识库' },
-  { id: 'settings', label: '设置' },
+const TABS: { id: TabId; label: string; Icon: typeof MessageSquareIcon }[] = [
+  { id: 'memory', label: '记忆', Icon: MessageSquareIcon },
+  { id: 'folders', label: '文件夹', Icon: FolderIcon },
+  { id: 'knowledge', label: '知识库', Icon: BookOpenIcon },
+  { id: 'settings', label: '设置', Icon: GearIcon },
 ]
 
 function App() {
@@ -59,93 +103,105 @@ function App() {
     void refreshStats()
   }, [refreshStats])
 
+  const railBtn = (active: boolean): React.CSSProperties => ({
+    backgroundColor: active ? tk.btnBg : 'transparent',
+    color: active ? tk.text : tk.textMuted,
+    border: active ? `1px solid ${tk.btnBorder}` : '1px solid transparent',
+  })
+
   return (
     <div
       style={{
         width: POPUP_WIDTH,
         maxHeight: POPUP_MAX_HEIGHT,
         display: 'flex',
-        flexDirection: 'column',
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Microsoft YaHei", sans-serif',
         backgroundColor: tk.bg,
         color: tk.text,
       }}
     >
-      {/* 头部 */}
-      <div
+      {/* ── 左侧图标导航栏(Codex app 式)────────────────────── */}
+      <nav
         style={{
+          width: RAIL_W,
+          flexShrink: 0,
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '12px 14px 8px',
+          padding: '10px 8px',
+          gap: 4,
+          backgroundColor: tk.bgSecondary,
+          borderRight: `1px solid ${tk.borderLight}`,
         }}
       >
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em' }}>
-            拼多多客服快捷回复
+        {/* 品牌标 */}
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: tk.accent,
+            color: '#ffffff',
+            marginBottom: 10,
+          }}
+          title="拼多多客服快捷回复"
+        >
+          <AiSparkIcon size={17} />
+        </div>
+
+        {TABS.map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            type="button"
+            className="pddcs-rail-btn"
+            style={railBtn(tab === id)}
+            onClick={() => setTab(id)}
+            title={label}
+          >
+            <Icon size={17} strokeWidth={tab === id ? 2.2 : 1.8} />
+          </button>
+        ))}
+
+        <div style={{ flex: 1 }} />
+
+        <button
+          type="button"
+          className="pddcs-rail-btn"
+          style={{ color: tk.textMuted }}
+          onClick={toggleTheme}
+          title={theme === 'light' ? '切换深色' : '切换浅色'}
+        >
+          {theme === 'light' ? <MoonIcon size={17} strokeWidth={1.8} /> : <SunIcon size={17} strokeWidth={1.8} />}
+        </button>
+      </nav>
+
+      {/* ── 右侧内容区 ───────────────────────────────────────── */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* 头部:页签名 + 数据概览 */}
+        <header style={{ padding: '14px 16px 10px' }}>
+          <div style={{ fontSize: 15, fontWeight: 650, letterSpacing: '-0.01em' }}>
+            {TABS.find((t) => t.id === tab)?.label}
           </div>
-          <div style={{ fontSize: 10.5, color: tk.textMuted, marginTop: 1 }}>
+          <div style={{ fontSize: 11, color: tk.textTertiary, marginTop: 2 }}>
             {stats
               ? `问答 ${stats.qaCount} · 回复 ${stats.replyCount} · 金标准 ${stats.goldenCount} · 知识 ${stats.knowledgeCount}`
               : '读取中…'}
           </div>
+        </header>
+
+        {/* 页签内容(各自滚动) */}
+        <div className="pddcs-scroll" style={{ overflowY: 'auto', padding: '2px 16px 16px', flex: 1 }}>
+          {tab === 'memory' && (
+            <MemoryListTab tk={tk} retentionDays={stats?.settings.retentionDays ?? 90} onDataChanged={refreshStats} />
+          )}
+          {tab === 'folders' && <FoldersTab tk={tk} onDataChanged={refreshStats} />}
+          {tab === 'knowledge' && <KnowledgeTab tk={tk} onDataChanged={refreshStats} />}
+          {tab === 'settings' && <SettingsTab tk={tk} onDataChanged={refreshStats} />}
         </div>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          style={{
-            width: 28,
-            height: 28,
-            padding: 0,
-            borderRadius: 8,
-            border: `1px solid ${tk.border}`,
-            backgroundColor: tk.btnBg,
-            color: tk.textMuted,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          title={theme === 'light' ? '切换深色' : '切换浅色'}
-        >
-          {theme === 'light' ? <MoonIcon /> : <SunIcon />}
-        </button>
-      </div>
-
-      {/* 页签栏 */}
-      <div style={{ display: 'flex', borderBottom: `1px solid ${tk.border}`, padding: '0 8px' }}>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            style={{
-              flex: 1,
-              padding: '7px 0 8px',
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              fontSize: 12.5,
-              fontWeight: tab === t.id ? 700 : 400,
-              color: tab === t.id ? tk.text : tk.textMuted,
-              borderBottom: `2px solid ${tab === t.id ? tk.text : 'transparent'}`,
-              fontFamily: 'inherit',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 页签内容(各自滚动) */}
-      <div style={{ overflowY: 'auto', padding: '10px 12px 12px', flex: 1 }}>
-        {tab === 'memory' && (
-          <MemoryListTab tk={tk} retentionDays={stats?.settings.retentionDays ?? 90} onDataChanged={refreshStats} />
-        )}
-        {tab === 'folders' && <FoldersTab tk={tk} onDataChanged={refreshStats} />}
-        {tab === 'knowledge' && <KnowledgeTab tk={tk} onDataChanged={refreshStats} />}
-        {tab === 'settings' && <SettingsTab tk={tk} onDataChanged={refreshStats} />}
       </div>
     </div>
   )

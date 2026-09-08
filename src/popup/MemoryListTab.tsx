@@ -12,7 +12,8 @@ import type {
   MemoryListItem,
 } from '../types/messages'
 import { filterQaRecords, remainingDays } from '../utils/panelLogic'
-import { Btn, Notice, formatTs, type NoticeMsg } from './ui-bits'
+import { Btn, Notice, cardStyle, formatTs, inputStyle, type NoticeMsg } from './ui-bits'
+import { SearchIcon } from '../ui/icons'
 
 export function MemoryListTab({
   tk,
@@ -93,29 +94,35 @@ export function MemoryListTab({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <input
-        value={keyword}
-        onChange={(e) => setKeyword(e.target.value)}
-        placeholder="关键词筛选问题…"
-        style={{
-          width: '100%',
-          padding: '7px 10px',
-          borderRadius: 8,
-          border: `1px solid ${tk.border}`,
-          backgroundColor: tk.bgCard,
-          color: tk.text,
-          fontSize: 12,
-          outline: 'none',
-          fontFamily: 'inherit',
-        }}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ position: 'relative' }}>
+        <span
+          style={{
+            position: 'absolute',
+            left: 11,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: tk.textTertiary,
+            display: 'flex',
+            pointerEvents: 'none',
+          }}
+        >
+          <SearchIcon size={13} strokeWidth={2} />
+        </span>
+        <input
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          placeholder="搜索历史问题…"
+          className="pddcs-input"
+          style={inputStyle(tk, { paddingLeft: 30 })}
+        />
+      </div>
 
       <Notice tk={tk} msg={msg} />
 
       {loading && <div style={{ fontSize: 12, color: tk.textMuted }}>读取中…</div>}
       {!loading && shown.length === 0 && (
-        <div style={{ fontSize: 12, color: tk.textTertiary, padding: '14px 0', textAlign: 'center', lineHeight: 1.7 }}>
+        <div style={{ fontSize: 12, color: tk.textTertiary, padding: '22px 0', textAlign: 'center', lineHeight: 1.8 }}>
           {items.length === 0 ? (
             <>
               还没有记录。打开拼多多聊天页,
@@ -134,12 +141,7 @@ export function MemoryListTab({
         return (
           <div
             key={item.id}
-            style={{
-              border: `1px solid ${tk.border}`,
-              borderRadius: 10,
-              backgroundColor: tk.bgCard,
-              padding: '8px 10px',
-            }}
+            style={cardStyle(tk, { padding: '10px 12px' })}
           >
             {/* 问题行 */}
             <div
@@ -177,7 +179,7 @@ export function MemoryListTab({
 
             {/* 展开区:回复列表 */}
             {expanded && (
-              <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {item.replies.length === 0 && (
                   <div style={{ fontSize: 11.5, color: tk.textTertiary }}>无回复(未结段)</div>
                 )}
@@ -185,10 +187,10 @@ export function MemoryListTab({
                   <div
                     key={r.id}
                     style={{
-                      borderTop: `1px solid ${tk.border}`,
-                      paddingTop: 6,
+                      borderTop: `1px solid ${tk.separator}`,
+                      paddingTop: 8,
                       display: 'flex',
-                      gap: 6,
+                      gap: 8,
                       alignItems: 'flex-start',
                     }}
                   >
@@ -196,10 +198,10 @@ export function MemoryListTab({
                       style={{
                         flex: 1,
                         fontSize: 11.5,
-                        lineHeight: 1.5,
+                        lineHeight: 1.55,
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
-                        color: tk.text,
+                        color: tk.textMuted,
                       }}
                     >
                       {r.text}
@@ -210,7 +212,7 @@ export function MemoryListTab({
                   </div>
                 ))}
                 {/* 删除单条(内联二次确认) */}
-                <div style={{ borderTop: `1px solid ${tk.border}`, paddingTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{ borderTop: `1px solid ${tk.separator}`, paddingTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
                   {confirmDeleteId === item.id ? (
                     <>
                       <span style={{ fontSize: 11, color: tk.errorText }}>确认删除该问答及其全部回复?</span>

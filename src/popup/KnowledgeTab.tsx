@@ -17,9 +17,11 @@ import type {
   UpdateKbResponse,
   UploadKbDocResponse,
 } from '../types/messages'
-import { Btn, Notice, formatTs, type NoticeMsg } from './ui-bits'
+import { Btn, Notice, cardStyle, formatTs, inputStyle, type NoticeMsg } from './ui-bits'
+import { BookOpenIcon, FileTextIcon, PlusIcon, SearchIcon, UploadIcon } from '../ui/icons'
 
-const KB = '#10b981'
+const KB = '#0d8a6c'
+const KB_BG = 'rgba(16,163,127,0.12)'
 
 export function KnowledgeTab({
   tk,
@@ -205,24 +207,15 @@ export function KnowledgeTab({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {creating ? (
-        <div
-          style={{
-            border: `1px solid ${tk.border}`,
-            borderRadius: 10,
-            backgroundColor: tk.bgCard,
-            padding: '8px 10px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-          }}
-        >
+        <div style={cardStyle(tk, { padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 })}>
           <input
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             placeholder="标题(检索锚,如:退货政策)"
             autoFocus
+            className="pddcs-input"
             style={inputStyle(tk)}
           />
           <textarea
@@ -230,6 +223,7 @@ export function KnowledgeTab({
             onChange={(e) => setNewContent(e.target.value)}
             rows={4}
             placeholder="正文(填充/复制的内容)"
+            className="pddcs-input"
             style={inputStyle(tk, { resize: 'vertical' })}
           />
           <div style={{ display: 'flex', gap: 6 }}>
@@ -244,10 +238,15 @@ export function KnowledgeTab({
       ) : (
         <div style={{ display: 'flex', gap: 6 }}>
           <Btn tk={tk} variant="primary" onClick={() => setCreating(true)}>
-            + 新建条目
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <PlusIcon size={12} strokeWidth={2.2} />新建条目
+            </span>
           </Btn>
           <Btn tk={tk} disabled={uploading} title="上传 .md 文档:自动分块(500 字/75 重叠)并逐块向量化" onClick={() => fileRef.current?.click()}>
-            {uploading ? '导入中…' : '⬆ 上传 .md'}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <UploadIcon size={12} strokeWidth={2} />
+              {uploading ? '导入中…' : '上传 .md'}
+            </span>
           </Btn>
         </div>
       )}
@@ -263,12 +262,28 @@ export function KnowledgeTab({
         }}
       />
 
-      <input
-        value={keyword}
-        onChange={(e) => setKeyword(e.target.value)}
-        placeholder="筛选标题或正文…"
-        style={inputStyle(tk)}
-      />
+      <div style={{ position: 'relative' }}>
+        <span
+          style={{
+            position: 'absolute',
+            left: 11,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: tk.textTertiary,
+            display: 'flex',
+            pointerEvents: 'none',
+          }}
+        >
+          <SearchIcon size={13} strokeWidth={2} />
+        </span>
+        <input
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          placeholder="搜索标题或正文…"
+          className="pddcs-input"
+          style={inputStyle(tk, { paddingLeft: 30 })}
+        />
+      </div>
 
       <Notice tk={tk} msg={msg} />
 
@@ -294,28 +309,27 @@ export function KnowledgeTab({
         return (
           <div
             key={k.id}
-            style={{
-              border: `1px solid ${tk.border}`,
-              borderRadius: 10,
-              backgroundColor: tk.bgCard,
-              padding: '8px 10px',
+            style={cardStyle(tk, {
+              padding: '10px 12px',
               display: 'flex',
               flexDirection: 'column',
-              gap: 5,
+              gap: 6,
               opacity: disabled ? 0.55 : 1,
-            }}
+            })}
           >
             {editing ? (
               <>
                 <input
                   value={draftTitle}
                   onChange={(e) => setDraftTitle(e.target.value)}
+                  className="pddcs-input"
                   style={inputStyle(tk)}
                 />
                 <textarea
                   value={draftContent}
                   onChange={(e) => setDraftContent(e.target.value)}
                   rows={5}
+                  className="pddcs-input"
                   style={inputStyle(tk, { resize: 'vertical' })}
                 />
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -329,19 +343,30 @@ export function KnowledgeTab({
               </>
             ) : (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span
-                    style={{
-                      backgroundColor: KB,
-                      color: '#fff',
-                      borderRadius: 3,
-                      fontSize: 10,
-                      padding: '1px 5px',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {k.source === 'doc' ? '📄 文档' : '知识库'}
-                  </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  backgroundColor: KB_BG,
+                  color: KB,
+                  borderRadius: 9999,
+                  fontSize: 10,
+                  padding: '2px 8px',
+                  fontWeight: 600,
+                }}
+              >
+                {k.source === 'doc' ? (
+                  <>
+                    <FileTextIcon size={10} strokeWidth={2.2} />文档
+                  </>
+                ) : (
+                  <>
+                    <BookOpenIcon size={10} strokeWidth={2.2} />知识库
+                  </>
+                )}
+              </span>
                   {disabled && (
                     <span style={{ fontSize: 10, color: tk.textMuted }}>已停用</span>
                   )}
@@ -418,18 +443,4 @@ export function KnowledgeTab({
   )
 }
 
-function inputStyle(tk: ThemeTokens, extra?: React.CSSProperties): React.CSSProperties {
-  return {
-    width: '100%',
-    padding: '5px 8px',
-    borderRadius: 7,
-    border: `1px solid ${tk.border}`,
-    backgroundColor: tk.bgCard,
-    color: tk.text,
-    fontSize: 12,
-    outline: 'none',
-    fontFamily: 'inherit',
-    lineHeight: 1.5,
-    ...extra,
-  }
-}
+// ─── 小工具 ────────────────────────────────────────────────────────────────────

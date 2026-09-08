@@ -13,27 +13,26 @@ import type {
   UpdateSettingsResponse,
 } from '../types/messages'
 import type { PddSettings } from '../types/memory'
-import { Btn, Notice, type NoticeMsg } from './ui-bits'
+import { Btn, Notice, cardStyle, type NoticeMsg } from './ui-bits'
+import { DownloadIcon, UploadIcon } from '../ui/icons'
 
 function Card({ tk, title, children }: { tk: ThemeTokens; title: string; children: React.ReactNode }) {
   return (
     <div
-      style={{
-        border: `1px solid ${tk.border}`,
-        borderRadius: 10,
-        padding: '9px 11px',
-        backgroundColor: tk.bgCard,
+      style={cardStyle(tk, {
+        padding: '12px 14px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 7,
-      }}
+        gap: 10,
+      })}
     >
-      <div style={{ fontSize: 11, fontWeight: 600, color: tk.textMuted }}>{title}</div>
+      <div style={{ fontSize: 11.5, fontWeight: 600, color: tk.textMuted }}>{title}</div>
       {children}
     </div>
   )
 }
 
+/** ChatGPT 式拨杆开关 */
 function Toggle({
   label,
   desc,
@@ -48,16 +47,45 @@ function Toggle({
   tk: ThemeTokens
 }) {
   return (
-    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{ marginTop: 2 }}
-      />
+    <label
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}
+      onClick={(e) => {
+        e.preventDefault()
+        onChange(!checked)
+      }}
+    >
+      <span
+        role="switch"
+        aria-checked={checked}
+        title={label}
+        style={{
+          width: 32,
+          height: 19,
+          flexShrink: 0,
+          borderRadius: 9999,
+          marginTop: 2,
+          position: 'relative',
+          transition: 'background-color .15s ease',
+          backgroundColor: checked ? tk.accent : tk.inputBorder,
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: checked ? 15 : 2,
+            width: 15,
+            height: 15,
+            borderRadius: '50%',
+            backgroundColor: '#ffffff',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+            transition: 'left .15s ease',
+          }}
+        />
+      </span>
       <span>
         <span style={{ fontSize: 12.5, fontWeight: 500 }}>{label}</span>
-        <span style={{ display: 'block', fontSize: 10.5, color: tk.textMuted, lineHeight: 1.5 }}>
+        <span style={{ display: 'block', fontSize: 10.5, color: tk.textMuted, lineHeight: 1.55, marginTop: 1 }}>
           {desc}
         </span>
       </span>
@@ -99,7 +127,7 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        style={{ width: '100%' }}
+        style={{ width: '100%', accentColor: tk.accent, cursor: 'pointer' }}
       />
     </div>
   )
@@ -296,10 +324,14 @@ export function SettingsTab({
         />
         <div style={{ display: 'flex', gap: 6 }}>
           <Btn tk={tk} variant="primary" disabled={busy} onClick={() => void exportJson()}>
-            导出 JSON
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <DownloadIcon size={12} strokeWidth={2} />导出 JSON
+            </span>
           </Btn>
           <Btn tk={tk} disabled={busy} onClick={() => fileRef.current?.click()}>
-            导入 JSON
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <UploadIcon size={12} strokeWidth={2} />导入 JSON
+            </span>
           </Btn>
           <input
             ref={fileRef}

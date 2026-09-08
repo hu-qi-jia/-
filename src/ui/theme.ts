@@ -1,5 +1,13 @@
 import type { ThemeMode } from './theme-context'
 
+/**
+ * 设计令牌 — 对齐 ChatGPT / Codex 官方配色体系。
+ *
+ * 原则(取自 ChatGPT 设计系统):
+ *  - 表面靠"明度差"分层而非硬边框(浅:#FFF→#F7F7F8→#ECECEC;深:#212121→#2F2F2F→#303030);
+ *  - 近乎单色,唯一强调色 emerald(#10A37F / #19C37D)只用于状态与主操作;
+ *  - 界面保持 <15% 视觉噪音,层级靠字重与字号,不靠容器描边。
+ */
 export interface ThemeTokens {
   bg: string
   bgSecondary: string
@@ -17,6 +25,7 @@ export interface ThemeTokens {
   btnHoverBg: string
   btnPrimaryBg: string
   btnPrimaryHover: string
+  btnPrimaryText: string
   successBg: string
   successText: string
   errorBg: string
@@ -26,56 +35,60 @@ export interface ThemeTokens {
   shadow: string
 }
 
+/** 浅色 — ChatGPT light:画布纯白,卡片 #F7F7F8,描边 #ECECEC,主操作黑底白字 */
 export const lightTheme: ThemeTokens = {
-  bg: '#f2f2f7',
-  bgSecondary: 'rgba(255,255,255,0.80)',
-  bgCard: 'rgba(255,255,255,0.90)',
-  text: '#1c1c1e',
-  textMuted: 'rgba(60,60,67,0.60)',
-  textTertiary: 'rgba(60,60,67,0.36)',
-  border: 'rgba(60,60,67,0.13)',
-  borderLight: 'rgba(60,60,67,0.08)',
-  separator: 'rgba(60,60,67,0.18)',
-  accent: '#007AFF',
-  accentHover: '#0066CC',
-  btnBg: 'rgba(255,255,255,0.90)',
-  btnBorder: 'rgba(60,60,67,0.13)',
-  btnHoverBg: 'rgba(242,242,247,0.95)',
-  btnPrimaryBg: '#007AFF',
-  btnPrimaryHover: '#0066CC',
-  successBg: 'rgba(52,199,89,0.14)',
-  successText: '#1a7f37',
-  errorBg: 'rgba(255,59,48,0.12)',
-  errorText: '#c0392b',
-  inputBg: 'rgba(255,255,255,0.75)',
-  inputBorder: 'rgba(60,60,67,0.20)',
-  shadow: '0 1px 8px rgba(0,0,0,0.07), 0 0 1px rgba(0,0,0,0.05)',
+  bg: '#ffffff',
+  bgSecondary: '#f9f9f9',
+  bgCard: '#f7f7f8',
+  text: '#0d0d0d',
+  textMuted: '#5d5d5d',
+  textTertiary: '#8e8e8e',
+  border: '#ececec',
+  borderLight: '#f0f0f0',
+  separator: '#ececec',
+  accent: '#10a37f',
+  accentHover: '#0d8a6c',
+  btnBg: '#ffffff',
+  btnBorder: '#ececec',
+  btnHoverBg: '#f7f7f8',
+  btnPrimaryBg: '#0d0d0d',
+  btnPrimaryHover: '#2f2f2f',
+  btnPrimaryText: '#ffffff',
+  successBg: 'rgba(16,163,127,0.10)',
+  successText: '#0d8a6c',
+  errorBg: 'rgba(237,78,76,0.10)',
+  errorText: '#d93a35',
+  inputBg: '#ffffff',
+  inputBorder: '#ececec',
+  shadow: '0 8px 24px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.05)',
 }
 
+/** 深色 — ChatGPT dark:画布 #212121,表面 #2F2F2F,浮层 #303030,主操作白底黑字 */
 export const darkTheme: ThemeTokens = {
-  bg: '#1c1c1e',
-  bgSecondary: 'rgba(44,44,46,0.92)',
-  bgCard: 'rgba(44,44,46,0.90)',
-  text: '#ffffff',
-  textMuted: 'rgba(235,235,245,0.60)',
-  textTertiary: 'rgba(235,235,245,0.36)',
-  border: 'rgba(255,255,255,0.10)',
+  bg: '#212121',
+  bgSecondary: '#1a1a1a',
+  bgCard: '#2f2f2f',
+  text: '#ececec',
+  textMuted: '#b4b4b4',
+  textTertiary: '#8e8e8e',
+  border: '#3a3a3a',
   borderLight: 'rgba(255,255,255,0.06)',
-  separator: 'rgba(255,255,255,0.14)',
-  accent: '#0A84FF',
-  accentHover: '#3395FF',
-  btnBg: 'rgba(58,58,60,0.92)',
-  btnBorder: 'rgba(255,255,255,0.10)',
-  btnHoverBg: 'rgba(72,72,74,0.92)',
-  btnPrimaryBg: '#0A84FF',
-  btnPrimaryHover: '#3395FF',
-  successBg: 'rgba(48,209,88,0.18)',
-  successText: '#30d158',
-  errorBg: 'rgba(255,69,58,0.18)',
-  errorText: '#ff453a',
-  inputBg: 'rgba(58,58,60,0.60)',
-  inputBorder: 'rgba(255,255,255,0.14)',
-  shadow: '0 4px 24px rgba(0,0,0,0.50), 0 1px 4px rgba(0,0,0,0.25)',
+  separator: 'rgba(255,255,255,0.10)',
+  accent: '#19c37d',
+  accentHover: '#1ad586',
+  btnBg: '#303030',
+  btnBorder: '#3a3a3a',
+  btnHoverBg: '#3a3a3a',
+  btnPrimaryBg: '#ffffff',
+  btnPrimaryHover: '#e0e0e0',
+  btnPrimaryText: '#0d0d0d',
+  successBg: 'rgba(25,195,125,0.14)',
+  successText: '#19c37d',
+  errorBg: 'rgba(255,92,76,0.14)',
+  errorText: '#ff5c4c',
+  inputBg: '#2f2f2f',
+  inputBorder: '#3a3a3a',
+  shadow: '0 12px 40px rgba(0,0,0,0.60), 0 2px 8px rgba(0,0,0,0.35)',
 }
 
 export function getThemeTokens(theme: ThemeMode): ThemeTokens {

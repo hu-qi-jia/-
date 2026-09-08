@@ -20,9 +20,18 @@ import type {
 } from '../types/messages'
 import { UNCATEGORIZED_FOLDER_ID } from '../types/memory'
 import { buildFolderTree, type FolderNode } from '../utils/panelLogic'
-import { Btn, Notice, type NoticeMsg } from './ui-bits'
+import { Btn, Notice, cardStyle, inputStyle, type NoticeMsg } from './ui-bits'
+import {
+  FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  PencilIcon,
+  StarIcon,
+  XIcon,
+} from '../ui/icons'
 
-const GOLDEN = '#f59e0b'
+const GOLDEN = '#d97706'
+const GOLDEN_BG = 'rgba(245,158,11,0.15)'
 
 const clamp2: React.CSSProperties = {
   display: '-webkit-box',
@@ -265,20 +274,23 @@ export function FoldersTab({
           </>
         ) : (
           <>
-            <span style={{ fontSize: 12.5, fontWeight: 700 }}>
-              {depth === 0 ? '📁' : '📂'} {f.name}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 650 }}>
+              {depth > 0 ? <FolderIcon size={14} strokeWidth={2} /> : <FolderOpenIcon size={14} strokeWidth={2} />}
+              {f.name}
             </span>
-            <span style={{ fontSize: 10.5, color: tk.textMuted }}>({count})</span>
+            <span style={{ fontSize: 10.5, color: tk.textTertiary }}>({count})</span>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
               {depth === 0 && (
                 <Btn tk={tk} variant="ghost" title="在此文件夹下新建子文件夹" onClick={() => { setCreateParent(f.id); setNewName('') }}>
-                  +子夹
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <FolderPlusIcon size={12} strokeWidth={2} />子夹
+                  </span>
                 </Btn>
               )}
               {!isUnc && (
                 <>
                   <Btn tk={tk} variant="ghost" title="重命名" onClick={() => { setRenamingId(f.id); setRenameName(f.name) }}>
-                    ✎
+                    <PencilIcon size={12} strokeWidth={2} />
                   </Btn>
                   {confirmFolderDelete === f.id ? (
                     <>
@@ -291,7 +303,7 @@ export function FoldersTab({
                     </>
                   ) : (
                     <Btn tk={tk} variant="ghost" title="删除文件夹(金标准保留)" onClick={() => setConfirmFolderDelete(f.id)}>
-                      ✕
+                      <XIcon size={12} strokeWidth={2} />
                     </Btn>
                   )}
                 </>
@@ -308,16 +320,13 @@ export function FoldersTab({
     return (
       <div
         key={g.id}
-        style={{
-          margin: indent ? '0 0 6px 14px' : '0 0 6px',
-          border: `1px solid ${tk.border}`,
-          borderRadius: 9,
-          backgroundColor: tk.bg,
-          padding: '7px 9px',
+        style={cardStyle(tk, {
+          margin: indent ? '0 0 8px 14px' : '0 0 8px',
+          padding: '9px 11px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 5,
-        }}
+          gap: 6,
+        })}
       >
         {editing ? (
           <>
@@ -346,17 +355,21 @@ export function FoldersTab({
           </>
         ) : (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span
                 style={{
-                  backgroundColor: GOLDEN,
-                  color: '#fff',
-                  borderRadius: 3,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  backgroundColor: GOLDEN_BG,
+                  color: GOLDEN,
+                  borderRadius: 9999,
                   fontSize: 10,
-                  padding: '1px 5px',
+                  padding: '2px 8px',
                   fontWeight: 600,
                 }}
               >
+                <StarIcon size={10} strokeWidth={2.2} />
                 金标准
               </span>
               {g.hasEmbedding === 0 && (
@@ -467,7 +480,9 @@ export function FoldersTab({
         </div>
       ) : (
         <Btn tk={tk} onClick={() => { setCreateParent('root'); setNewName('') }}>
-          + 新建根文件夹
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <FolderPlusIcon size={12} strokeWidth={2} />新建根文件夹
+          </span>
         </Btn>
       )}
 
@@ -489,22 +504,6 @@ export function FoldersTab({
 }
 
 // ─── 小工具 ────────────────────────────────────────────────────────────────────
-
-function inputStyle(tk: ThemeTokens, extra?: React.CSSProperties): React.CSSProperties {
-  return {
-    width: '100%',
-    padding: '5px 8px',
-    borderRadius: 7,
-    border: `1px solid ${tk.border}`,
-    backgroundColor: tk.bgCard,
-    color: tk.text,
-    fontSize: 12,
-    outline: 'none',
-    fontFamily: 'inherit',
-    lineHeight: 1.5,
-    ...extra,
-  }
-}
 
 /** 迁移下拉的扁平选项(两层缩进) */
 function flatFolderOptions(tree: FolderNode[]): React.ReactNode {

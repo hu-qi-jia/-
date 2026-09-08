@@ -2,7 +2,7 @@
  * PDD 聊天工作台 —— AI 回复按钮 + 候选弹窗 + 直填(ISOLATED,P2-4)
  *
  * 交互(设计文档 §6.3):
- *  - 每条可见买家文本行右侧常显半透明 AI 圆钮(悬停加深)
+ *  - 每条可见买家文本气泡右侧紧跟「AI回复」胶囊按钮(ChatGPT 消息操作按钮风格)
  *  - 点击 → 合并该行向上连续买家文本为 query → SW GET_SUGGESTIONS
  *  - 状态机:无候选提示 / 单候选或直填开关开 → 直填 / 多候选弹窗 top-3
  *  - 弹窗:金标准徽标+置顶、得分、同内容×n、原始问题摘要、设为金标准、仅复制
@@ -39,45 +39,73 @@ const POPUP_W = 340
 
 const CSS = `
 #${OVERLAY_ID} { position: fixed; inset: 0; pointer-events: none; z-index: 2147483000;
-  font-family: system-ui, "Microsoft YaHei", sans-serif; }
-.pddcs-ai-btn { position: fixed; width: 22px; height: 22px; border-radius: 50%;
-  border: none; cursor: pointer; pointer-events: auto; padding: 0;
-  background: rgba(99,102,241,.45); color: #fff; font-size: 10px; font-weight: 700;
-  line-height: 22px; text-align: center; transition: background .15s; }
-.pddcs-ai-btn:hover { background: rgba(99,102,241,.95); }
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    "Microsoft YaHei", sans-serif; }
+
+/* AI回复胶囊按钮 — ChatGPT 消息操作按钮风格(紧跟买家气泡右侧) */
+.pddcs-ai-btn { position: fixed; height: 26px; border-radius: 9999px; border: 1px solid #ececec;
+  cursor: pointer; pointer-events: auto; padding: 0 11px; display: inline-flex; align-items: center;
+  gap: 5px; background: #fff; color: #5d5d5d; font-size: 11.5px; font-weight: 500; line-height: 1;
+  letter-spacing: -0.01em; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  transition: background-color .12s ease, color .12s ease, border-color .12s ease; }
+.pddcs-ai-btn:hover { background: #f7f7f8; color: #0d0d0d; border-color: #d9d9e3; }
+.pddcs-ai-btn:active { background: #ececec; }
+.pddcs-ai-btn svg { flex-shrink: 0; color: #10a37f; }
+.pddcs-ai-btn .pddcs-ai-btn-label { white-space: nowrap; }
+.pddcs-ai-btn:disabled { opacity: .55; cursor: wait; }
+@keyframes pddcs-spin { to { transform: rotate(360deg); } }
+.pddcs-ai-btn.pddcs-loading svg { animation: pddcs-spin .8s linear infinite; }
+
+/* 候选弹窗 — ChatGPT 卡片风格 */
 .pddcs-popup { position: fixed; width: ${POPUP_W}px; max-height: 62vh; overflow: auto;
-  pointer-events: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 12px; color: #1f2937; }
-.pddcs-popup-head { display: flex; align-items: center; padding: 8px 10px;
-  border-bottom: 1px solid #f0f0f0; font-weight: 600; position: sticky; top: 0;
-  background: #fff; }
+  pointer-events: auto; background: #fff; border: 1px solid #ececec; border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06);
+  font-size: 12.5px; color: #0d0d0d; }
+.pddcs-popup-head { display: flex; align-items: center; padding: 11px 14px;
+  border-bottom: 1px solid #f0f0f0; font-weight: 600; font-size: 13px; position: sticky; top: 0;
+  background: #fff; letter-spacing: -0.01em; }
 .pddcs-popup-close { margin-left: auto; border: none; background: none; cursor: pointer;
-  font-size: 14px; color: #9ca3af; }
-.pddcs-popup-close:hover { color: #374151; }
-.pddcs-cand { padding: 8px 10px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
-.pddcs-cand:hover { background: #f8f9ff; }
-.pddcs-cand-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.pddcs-badge { color: #fff; border-radius: 3px; font-size: 10px; padding: 1px 5px; }
-.pddcs-badge.golden { background: #f59e0b; }
-.pddcs-badge.knowledge { background: #10b981; }
-.pddcs-badge.history { background: #6366f1; }
-.pddcs-score { color: #9ca3af; font-size: 10px; }
-.pddcs-fold { color: #9ca3af; font-size: 10px; }
+  width: 24px; height: 24px; border-radius: 8px; display: flex; align-items: center;
+  justify-content: center; color: #8e8e8e; font-size: 15px; transition: background-color .12s ease; }
+.pddcs-popup-close:hover { background: #f7f7f8; color: #0d0d0d; }
+.pddcs-cand { padding: 10px 14px; border-bottom: 1px solid #f5f5f5; cursor: pointer;
+  transition: background-color .1s ease; }
+.pddcs-cand:hover { background: #f7f7f8; }
+.pddcs-cand-top { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.pddcs-badge { display: inline-flex; align-items: center; border-radius: 9999px;
+  font-size: 10px; font-weight: 600; padding: 2px 8px; }
+.pddcs-badge.golden { background: rgba(245,158,11,0.15); color: #b45309; }
+.pddcs-badge.knowledge { background: rgba(16,163,127,0.12); color: #0d8a6c; }
+.pddcs-badge.history { background: #f7f7f8; color: #5d5d5d; border: 1px solid #ececec; }
+.pddcs-score { color: #8e8e8e; font-size: 10px; font-variant-numeric: tabular-nums; }
+.pddcs-fold { color: #8e8e8e; font-size: 10px; }
 .pddcs-cand-actions { margin-left: auto; display: flex; gap: 4px; }
-.pddcs-mini { border: 1px solid #e5e7eb; background: #fff; border-radius: 4px;
-  cursor: pointer; font-size: 10px; padding: 1px 6px; color: #6b7280; }
-.pddcs-mini:hover { border-color: #6366f1; color: #6366f1; }
-.pddcs-cand-text { white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+.pddcs-mini { border: 1px solid transparent; background: transparent; border-radius: 9999px;
+  cursor: pointer; font-size: 10.5px; padding: 2px 9px; color: #5d5d5d; font-weight: 500;
+  transition: background-color .1s ease, color .1s ease; }
+.pddcs-mini:hover { background: #ececec; color: #0d0d0d; }
+.pddcs-cand-text { white-space: pre-wrap; word-break: break-word; line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.pddcs-cand-src { margin-top: 4px; color: #9ca3af; font-size: 11px;
+.pddcs-cand-src { margin-top: 5px; color: #8e8e8e; font-size: 11px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pddcs-popup-foot { padding: 6px 10px; color: #9ca3af; font-size: 11px; }
+.pddcs-popup-foot { padding: 8px 14px; color: #8e8e8e; font-size: 11px; }
+
+/* 轻提示 — 胶囊式 toast */
 .pddcs-toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
-  pointer-events: auto; background: rgba(17,24,39,.88); color: #fff; font-size: 12px;
-  padding: 7px 14px; border-radius: 6px; opacity: 0; transition: opacity .2s;
-  max-width: 60vw; z-index: 2147483001; }
+  pointer-events: auto; background: rgba(13,13,13,.92); color: #fff; font-size: 12.5px;
+  padding: 8px 16px; border-radius: 9999px; opacity: 0; transition: opacity .2s;
+  max-width: 60vw; z-index: 2147483001; box-shadow: 0 4px 16px rgba(0,0,0,0.16); }
 .pddcs-toast.show { opacity: 1; }
 `
+
+/** Lucide "sparkles" 同款图标(2px 描边圆角线帽,与 ChatGPT 一致) */
+const SPARK_SVG =
+  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>' +
+  '<path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>'
+
+const AI_BTN_W = 80 // "AI回复" 胶囊预估宽度(定位用)
 
 function ensureOverlay(): HTMLDivElement {
   let overlay = document.getElementById(OVERLAY_ID) as HTMLDivElement | null
@@ -199,8 +227,8 @@ function scanButtons(): void {
     if (!btn) {
       btn = document.createElement('button')
       btn.className = 'pddcs-ai-btn'
-      btn.textContent = 'AI'
       btn.title = 'AI 检索历史回复'
+      btn.innerHTML = `${SPARK_SVG}<span class="pddcs-ai-btn-label">AI回复</span>`
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation()
         void onButtonClick(li, btn!)
@@ -208,14 +236,19 @@ function scanButtons(): void {
       overlay.appendChild(btn)
       rowBtns.set(li, btn)
     }
-    // x:行右侧(买家气泡靠左,右侧是空白区);放不下则贴行左
-    const x = rect.right + 6 + 22 <= window.innerWidth - 8
-      ? rect.right + 6
-      : Math.max(4, rect.left - 28)
-    // y:行垂直居中,夹在容器可视区内
+    // 锚定到买家气泡本身(.msg-content-box)右侧 —— 气泡在哪按钮就跟在哪,
+    // 不再贴整行右缘(行右缘距气泡太远)。气泡取不到时退回整行矩形。
+    const bubble = li.querySelector('.buyer-item .msg-content-box')
+    const anchor = (bubble as HTMLElement | null)?.getBoundingClientRect() ?? rect
+    const bw = btn.offsetWidth || AI_BTN_W
+    // x:气泡右侧;放不下则贴气泡左侧
+    const x = anchor.right + 8 + bw <= window.innerWidth - 8
+      ? anchor.right + 8
+      : Math.max(4, anchor.left - bw - 8)
+    // y:气泡垂直居中,夹在消息容器可视区内
     const y = Math.min(
-      Math.max(rect.top + rect.height / 2 - 11, cont.top + 2),
-      cont.bottom - 24,
+      Math.max(anchor.top + anchor.height / 2 - 13, cont.top + 2),
+      cont.bottom - 28,
     )
     btn.style.left = `${Math.round(x)}px`
     btn.style.top = `${Math.round(y)}px`
@@ -263,9 +296,14 @@ async function onButtonClick(li: Element, btn: HTMLButtonElement): Promise<void>
   }
   if (DEBUG) console.log('[PDD CS UI] query:', query.slice(0, 80))
 
-  btn.textContent = '…'
+  const label = btn.querySelector('.pddcs-ai-btn-label') as HTMLElement | null
+  btn.disabled = true
+  btn.classList.add('pddcs-loading')
+  if (label) label.textContent = '检索中'
   const { suggestions, settings, error } = await fetchSuggestions(query)
-  btn.textContent = 'AI'
+  btn.disabled = false
+  btn.classList.remove('pddcs-loading')
+  if (label) label.textContent = 'AI回复'
 
   if (error) {
     toast(`检索失败:${error}`)
